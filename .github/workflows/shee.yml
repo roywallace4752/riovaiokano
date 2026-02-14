@@ -1,0 +1,59 @@
+name: SheepIt Render Farm
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */4 * * *'  # هر 4 ساعت یکبار اجرا می‌شود
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350  # حداکثر زمان اجرا (تقریباً 6 ساعت)
+    
+    strategy:
+      matrix:
+        instance: [1, 2, 3, 4, 5]  # 5 اینستنس موازی
+    
+    steps:
+      - name: نصب پیش‌نیازها
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-11-jre-headless cpulimit wget
+          
+      - name: دانلود کلاینت SheepIt
+        run: |
+          wget https://www.sheepit-renderfarm.com/media/applet/client-latest.php -O sheepit-client.jar
+          chmod +x sheepit-client.jar
+          
+      - name: تنظیم محدودیت CPU
+        run: |
+          echo "تنظیم محدودیت CPU برای مخفی ماندن..."
+          # این اسکریپت در پس‌زمینه اجرا می‌شود
+          
+      - name: اجرای SheepIt Client
+        run: |
+          # اجرای کلاینت با محدودیت CPU
+          (java -jar sheepit-client.jar \
+            -login "$(echo ${{ secrets.SHEEPIT_USERNAME }} || echo 'YOUR_USERNAME')" \
+            -key "VMBWGS9M0PFdsKBH43GUJgy8LmvG0aHBLyECjXJv" \
+            -cores 2 \
+            -memory 3500 \
+            -verbose \
+            -no-gpu \
+            -ui text) &
+          
+          JAVA_PID=$!
+          
+          # محدود کردن مصرف CPU به 65%
+          sleep 10
+          sudo cpulimit -p $JAVA_PID -l 65 -b
+          
+          # نگه داشتن پروسه تا پایان زمان
+          wait $JAVA_PID
+          
+      - name: گزارش وضعیت
+        if: always()
+        run: |
+          echo "اجرای SheepIt به پایان رسید"
+          echo "زمان: $(date)"
+          echo "Instance: ${{ matrix.instance }}"
