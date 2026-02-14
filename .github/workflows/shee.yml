@@ -1,4 +1,4 @@
-name: SheepIt Render Farm
+name: Sheep
 
 on:
   workflow_dispatch:
