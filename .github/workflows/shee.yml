@@ -1,4 +1,4 @@
-name: Titde (Fixed)
+name: Tide (Complete Fix)
 
 on:
   workflow_dispatch:
@@ -38,7 +38,7 @@ jobs:
           chmod +x agent
           echo "✅ Agent ready: $(file agent)"
 
-      - name: Bind Device First (CRITICAL!)
+      - name: Bind Device to Account
         env:
           TITAN_HASH: ${{ secrets.TITAN_KEY }}
         run: |
@@ -47,23 +47,25 @@ jobs:
           echo "🔗 STEP 1: Binding device to account..."
           echo "Hash: ${TITAN_HASH:0:4}***${TITAN_HASH: -4}"
           
-          # اول باید bind کنیم
+          # bind با تمام پارامترهای لازم
           ./agent bind \
             --hash=${TITAN_HASH} \
-            https://api-testnet.titannet.io/api/v2/device/binding
+            --working-dir=$(pwd) \
+            --server-url=https://api-test1.container1.titannet.io \
+            https://api-test1.container1.titannet.io/api/v2/device/binding
           
-          if [ $? -eq 0 ]; then
+          BIND_EXIT=$?
+          
+          if [ $BIND_EXIT -eq 0 ]; then
             echo "✅ Device bound successfully!"
           else
-            echo "❌ Binding failed! Trying alternative API..."
-            ./agent bind \
-              --hash=${TITAN_HASH} \
-              https://api-test1.container1.titannet.io/api/v2/device/binding
+            echo "⚠️  Binding returned exit code: $BIND_EXIT"
+            echo "Continuing anyway (might already be bound)..."
           fi
           
           echo ""
-          echo "⏳ Waiting 10 seconds for binding to register..."
-          sleep 10
+          echo "⏳ Waiting 15 seconds for binding to register..."
+          sleep 15
 
       - name: Start Daemon
         run: |
@@ -71,8 +73,11 @@ jobs:
           
           echo "🚀 STEP 2: Starting daemon..."
           
-          # حالا daemon رو start می‌کنیم
-          nohup ./agent daemon start --init \
+          # start daemon با --init
+          nohup ./agent daemon start \
+            --init \
+            --working-dir=$(pwd) \
+            --server-url=https://api-test1.container1.titannet.io \
             > titan-stdout.log 2> titan-stderr.log &
           
           AGENT_PID=$!
@@ -86,11 +91,13 @@ jobs:
           if ps -p $AGENT_PID > /dev/null; then
             echo "✅ Daemon is running!"
           else
-            echo "❌ Daemon failed!"
+            echo "❌ Daemon failed to start!"
+            echo ""
             echo "=== STDOUT ==="
-            cat titan-stdout.log
+            cat titan-stdout.log 2>/dev/null || echo "No stdout"
+            echo ""
             echo "=== STDERR ==="
-            cat titan-stderr.log
+            cat titan-stderr.log 2>/dev/null || echo "No stderr"
             exit 1
           fi
 
@@ -98,9 +105,13 @@ jobs:
         run: |
           cd titan_core
           echo "📊 Node Information:"
-          ./agent info 2>/dev/null || echo "Info command not available"
+          echo "─────────────────────────────────────────"
+          ./agent info \
+            --working-dir=$(pwd) \
+            --server-url=https://api-test1.container1.titannet.io \
+            2>&1 || echo "ℹ️  Info command unavailable (normal)"
 
-      - name: Monitor Node
+      - name: Monitor Node Activity
         run: |
           cd titan_core
           
@@ -108,105 +119,173 @@ jobs:
           RUNTIME_SECONDS=$((RUNTIME_HOURS * 3600))
           AGENT_PID=$(cat agent.pid)
           
+          echo ""
           echo "════════════════════════════════════════"
           echo "  MONITORING FOR ${RUNTIME_HOURS} HOURS"
           echo "════════════════════════════════════════"
           echo "Start: $(date)"
-          echo "Dashboard: https://edge.titannet.io/deviceManagement"
+          echo "End estimate: $(date -d "+${RUNTIME_HOURS} hours" 2>/dev/null || echo "N/A")"
+          echo ""
+          echo "📍 Dashboard: https://edge.titannet.io/deviceManagement"
+          echo "⏰ Device should appear within 5-15 minutes"
           echo "════════════════════════════════════════"
           echo ""
-          echo "⚠️  IMPORTANT: Device should appear in dashboard within 5-15 minutes!"
-          echo ""
           
-          INTERVAL=300
+          INTERVAL=300  # 5 minutes
           ELAPSED=0
+          CHECK_COUNT=0
           
           while [ $ELAPSED -lt $RUNTIME_SECONDS ]; do
+            CHECK_COUNT=$((CHECK_COUNT + 1))
             HOURS=$((ELAPSED / 3600))
             MINUTES=$(((ELAPSED % 3600) / 60))
             
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "⏰ Runtime: ${HOURS}h ${MINUTES}m | $(date '+%H:%M:%S')"
+            echo "⏰ Check #${CHECK_COUNT} | Runtime: ${HOURS}h ${MINUTES}m | $(date '+%H:%M:%S')"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             
+            # Process check
             if ! ps -p $AGENT_PID > /dev/null 2>&1; then
-              echo "❌ Daemon stopped!"
-              cat titan-stdout.log titan-stderr.log
+              echo "❌ CRITICAL: Daemon stopped unexpectedly!"
+              echo ""
+              echo "Last 20 lines of stdout:"
+              tail -n 20 titan-stdout.log 2>/dev/null
+              echo ""
+              echo "Last 20 lines of stderr:"
+              tail -n 20 titan-stderr.log 2>/dev/null
               exit 1
             fi
             
-            echo "✅ Status: RUNNING"
+            echo "✅ Status: RUNNING (PID: $AGENT_PID)"
             
-            ps -p $AGENT_PID -o %cpu,%mem,vsz,rss 2>/dev/null | tail -n 1 | \
-              awk '{printf "💻 CPU: %s%% | MEM: %s%% | VSZ: %.1fMB | RSS: %.1fMB\n", $1, $2, $3/1024, $4/1024}'
+            # Resource usage
+            ps -p $AGENT_PID -o %cpu,%mem,vsz,rss,etime 2>/dev/null | tail -n 1 | \
+              awk '{printf "💻 CPU: %s%% | MEM: %s%% | VSZ: %.1fMB | RSS: %.1fMB | Uptime: %s\n", $1, $2, $3/1024, $4/1024, $5}'
             
-            echo "📋 Recent stdout:"
-            tail -n 3 titan-stdout.log 2>/dev/null | sed 's/^/   /' || echo "   No output"
+            # Recent logs
+            echo "📋 Last 3 stdout lines:"
+            tail -n 3 titan-stdout.log 2>/dev/null | sed 's/^/   /' || echo "   (no output yet)"
             
             if [ -s titan-stderr.log ]; then
-              echo "⚠️  Recent stderr:"
-              tail -n 2 titan-stderr.log | sed 's/^/   /'
+              echo "⚠️  Last 2 stderr lines:"
+              tail -n 2 titan-stderr.log 2>/dev/null | sed 's/^/   /'
             fi
             
-            netstat -tn 2>/dev/null | grep ESTABLISHED | wc -l | \
-              awk '{print "🌐 Connections: "$1}'
+            # Network stats
+            ESTABLISHED=$(netstat -tn 2>/dev/null | grep ESTABLISHED | wc -l)
+            LISTENING=$(netstat -tln 2>/dev/null | grep LISTEN | wc -l)
+            echo "🌐 Network: ${ESTABLISHED} established, ${LISTENING} listening"
+            
+            # File stats
+            LOG_SIZE_OUT=$(du -h titan-stdout.log 2>/dev/null | cut -f1)
+            LOG_SIZE_ERR=$(du -h titan-stderr.log 2>/dev/null | cut -f1)
+            echo "📁 Logs: stdout=${LOG_SIZE_OUT:-0}, stderr=${LOG_SIZE_ERR:-0}"
+            
+            # Working directory files
+            FILE_COUNT=$(ls -1 | wc -l)
+            echo "📂 Working dir: ${FILE_COUNT} files"
             
             echo ""
             sleep $INTERVAL
             ELAPSED=$((ELAPSED + INTERVAL))
           done
           
+          echo ""
           echo "════════════════════════════════════════"
-          echo "✅ Monitoring completed!"
+          echo "✅ MONITORING COMPLETED SUCCESSFULLY!"
           echo "════════════════════════════════════════"
 
-      - name: Final Report
+      - name: Final Status Report
         if: always()
         run: |
-          cd titan_core 2>/dev/null || exit 0
+          cd titan_core 2>/dev/null || { echo "titan_core not found"; exit 0; }
           
           echo ""
           echo "════════════════════════════════════════"
-          echo "         FINAL REPORT"
+          echo "         FINAL STATUS REPORT"
           echo "════════════════════════════════════════"
+          echo ""
           
+          # Process status
           if [ -f agent.pid ]; then
             AGENT_PID=$(cat agent.pid)
             if ps -p $AGENT_PID > /dev/null 2>&1; then
-              echo "✅ Daemon: RUNNING"
-              echo "Stopping gracefully..."
-              kill $AGENT_PID 2>/dev/null || true
-              sleep 2
+              echo "✅ Daemon Status: RUNNING"
+              echo "   PID: $AGENT_PID"
+              ps -p $AGENT_PID -o %cpu,%mem,vsz,rss,etime | tail -n 1 | \
+                awk '{printf "   CPU: %s%% | MEM: %s%% | Uptime: %s\n", $1, $2, $5}'
+              echo ""
+              echo "🛑 Stopping daemon gracefully..."
+              kill -TERM $AGENT_PID 2>/dev/null || true
+              sleep 3
+              if ps -p $AGENT_PID > /dev/null 2>&1; then
+                kill -KILL $AGENT_PID 2>/dev/null || true
+              fi
+              echo "✓ Daemon stopped"
             else
-              echo "⚠️  Daemon: STOPPED"
+              echo "⚠️  Daemon Status: STOPPED"
+              echo "   Last exit code: $(wait $AGENT_PID 2>&1; echo $?)"
             fi
+          else
+            echo "⚠️  No PID file found"
           fi
           
           echo ""
-          echo "📄 Complete STDOUT:"
-          echo "─────────────────────────────────────────"
-          cat titan-stdout.log 2>/dev/null || echo "No stdout"
+          echo "────────────────────────────────────────"
+          echo "📊 STATISTICS"
+          echo "────────────────────────────────────────"
+          
+          if [ -f titan-stdout.log ]; then
+            STDOUT_LINES=$(wc -l < titan-stdout.log)
+            STDOUT_SIZE=$(du -h titan-stdout.log | cut -f1)
+            echo "STDOUT: ${STDOUT_LINES} lines, ${STDOUT_SIZE}"
+          fi
+          
+          if [ -f titan-stderr.log ]; then
+            STDERR_LINES=$(wc -l < titan-stderr.log)
+            STDERR_SIZE=$(du -h titan-stderr.log | cut -f1)
+            echo "STDERR: ${STDERR_LINES} lines, ${STDERR_SIZE}"
+          fi
           
           echo ""
-          echo "📄 Complete STDERR:"
-          echo "─────────────────────────────────────────"
-          cat titan-stderr.log 2>/dev/null || echo "No stderr"
+          echo "────────────────────────────────────────"
+          echo "📄 COMPLETE STDOUT LOG"
+          echo "────────────────────────────────────────"
+          cat titan-stdout.log 2>/dev/null || echo "(no stdout log)"
+          
+          echo ""
+          echo "────────────────────────────────────────"
+          echo "📄 COMPLETE STDERR LOG"
+          echo "────────────────────────────────────────"
+          cat titan-stderr.log 2>/dev/null || echo "(no stderr log)"
+          
+          echo ""
+          echo "────────────────────────────────────────"
+          echo "📁 WORKING DIRECTORY CONTENTS"
+          echo "────────────────────────────────────────"
+          ls -lah
           
           echo ""
           echo "════════════════════════════════════════"
-          echo "💡 NEXT STEPS:"
+          echo "💡 NEXT STEPS"
           echo "════════════════════════════════════════"
-          echo "1. Check dashboard: https://edge.titannet.io/deviceManagement"
-          echo "2. Device should appear within 5-15 minutes after binding"
-          echo "3. If not visible, check binding was successful in logs"
-          echo "4. Try running again or contact Titan support"
+          echo "1. ✓ Check dashboard: https://edge.titannet.io/deviceManagement"
+          echo "2. ✓ Device should appear within 5-15 minutes"
+          echo "3. ✓ If not visible:"
+          echo "   - Verify binding was successful (check logs above)"
+          echo "   - Wait a bit longer (can take up to 30 min)"
+          echo "   - Check you're logged into correct account"
+          echo "4. ✓ Download logs from Artifacts tab for analysis"
+          echo "5. ✓ If successful, deploy to your own server!"
           echo "════════════════════════════════════════"
 
-      - name: Upload Logs
+      - name: Upload Complete Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: titan-logs-${{ github.run_number }}
-          path: titan_core/*.log
+          name: titan-complete-logs-${{ github.run_number }}
+          path: |
+            titan_core/*.log
+            titan_core/agent.pid
           retention-days: 7
           if-no-files-found: warn
