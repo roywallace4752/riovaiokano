@@ -1,60 +1,178 @@
-name: Sheep
+name: Titaniom
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 */4 * * *'  # هر 4 ساعت یکبار اجرا می‌شود
+  workflow_dispatch:  # اجرای دستی
+  push:
+    branches: [ main ]
 
 jobs:
-  render:
+  titan-agent:
     runs-on: ubuntu-latest
-    timeout-minutes: 350  # حداکثر زمان اجرا (تقریباً 6 ساعت)
-    
-    strategy:
-      matrix:
-        instance: [1, 2, 3, 4, 5]  # 5 اینستنس موازی
     
     steps:
-      - name: نصب پیش‌نیازها
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: System Information
+        run: |
+          echo "=== System Info ==="
+          uname -a
+          echo "=== CPU Info ==="
+          lscpu | grep -E 'Model name|CPU\(s\)'
+          echo "=== Memory Info ==="
+          free -h
+          echo "=== Disk Info ==="
+          df -h
+          echo "=== Network Info ==="
+          ip addr show
+
+      - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y openjdk-11-jre-headless cpulimit wget
-          
-      - name: دانلود کلاینت SheepIt
+          sudo apt-get install -y wget unzip curl net-tools
+
+      - name: Download Titan Agent
         run: |
-          wget https://www.sheepit-renderfarm.com/media/applet/client-latest.php -O sheepit-client.jar
-          chmod +x sheepit-client.jar
-          
-      - name: تنظیم محدودیت CPU
+          echo "=== Downloading Titan Agent ==="
+          cd /tmp
+          wget https://pcdn.titannet.io/test4/bin/agent-linux.zip
+          ls -lh agent-linux.zip
+
+      - name: Extract and Setup
         run: |
-          echo "تنظیم محدودیت CPU برای مخفی ماندن..."
-          # این اسکریپت در پس‌زمینه اجرا می‌شود
+          echo "=== Extracting Titan Agent ==="
+          sudo mkdir -p /opt/titanagent
+          sudo unzip /tmp/agent-linux.zip -d /opt/titanagent
+          cd /opt/titanagent
+          ls -la
           
-      - name: اجرای SheepIt Client
+          echo "=== Making executable ==="
+          sudo chmod +x ./agent
+          ./agent --version || echo "Version check failed (might be normal)"
+
+      - name: Configure and Run Titan Agent
+        env:
+          TITAN_KEY: "JEgcMQ9MtjIv"
         run: |
-          # اجرای کلاینت با استفاده از -password برای Render Key
-          # محدود کردن مصرف به 65% برای مخفی ماندن (Stealth Profile)
+          echo "=== Starting Titan Agent ==="
+          cd /opt/titanagent
           
-          java -jar sheepit-client.jar \
-            -login "${{ secrets.SHEEPIT_USERNAME || 'YOUR_USERNAME' }}" \
-            -password "VMBWGS9M0PFdsKBH43GUJgy8LmvG0aHBLyECjXJv" \
-            -cores 2 \
-            -memory 3500 \
-            -no-gpu \
-            -ui text &
+          # اجرای agent در background
+          sudo ./agent \
+            --working-dir=/opt/titanagent \
+            --server-url=https://test4-api.titannet.io \
+            --key=${TITAN_KEY} > /tmp/titan.log 2>&1 &
           
-          JAVA_PID=$!
+          AGENT_PID=$!
+          echo "Agent PID: $AGENT_PID"
           
-          # صبر کنید تا پروسه کاملاً بالا بیاید سپس محدودیت را اعمال کنید
-          sleep 15
-          sudo cpulimit -p $JAVA_PID -l 65 -b
+          # صبر برای اتصال
+          echo "=== Waiting for connection (30 seconds) ==="
+          sleep 30
           
-          # نگه داشتن پروسه تا پایان عمر 5 ساعته ورکر
-          wait $JAVA_PID
+          # چک کردن process
+          if ps -p $AGENT_PID > /dev/null; then
+            echo "✅ Agent is running!"
+          else
+            echo "❌ Agent stopped unexpectedly"
+            exit 1
+          fi
+
+      - name: Monitor Agent Logs
+        run: |
+          echo "=== Agent Logs (First 50 lines) ==="
+          head -n 50 /tmp/titan.log || echo "No logs yet"
           
-      - name: گزارش وضعیت
+          echo ""
+          echo "=== Recent Logs ==="
+          tail -n 20 /tmp/titan.log || echo "No recent logs"
+          
+          echo ""
+          echo "=== Checking for success indicators ==="
+          if grep -i "connect" /tmp/titan.log; then
+            echo "✅ Connection attempt detected"
+          fi
+          
+          if grep -i "success\|online\|ready" /tmp/titan.log; then
+            echo "✅ Agent appears to be online"
+          fi
+          
+          if grep -i "error\|fail" /tmp/titan.log; then
+            echo "⚠️  Errors detected in logs"
+          fi
+
+      - name: Network Status Check
+        run: |
+          echo "=== Network Connections ==="
+          sudo netstat -tuln | grep ESTABLISHED || echo "No established connections yet"
+          
+          echo ""
+          echo "=== Process Info ==="
+          ps aux | grep agent | grep -v grep || echo "Agent process not found"
+
+      - name: Keep Agent Running (5 minutes test)
+        run: |
+          echo "=== Running for 5 minutes ==="
+          echo "Start time: $(date)"
+          
+          for i in {1..10}; do
+            echo "--- Minute $i/10 ---"
+            sleep 30
+            
+            # نمایش لاگ‌های جدید
+            echo "Latest logs:"
+            tail -n 5 /tmp/titan.log
+            
+            # چک کردن process
+            if ! pgrep -f "agent.*titannet" > /dev/null; then
+              echo "❌ Agent stopped at minute $i"
+              echo "=== Full Logs ==="
+              cat /tmp/titan.log
+              exit 1
+            fi
+            
+            echo "✅ Agent still running"
+            echo ""
+          done
+          
+          echo "End time: $(date)"
+          echo "✅ Test completed successfully!"
+
+      - name: Final Status Report
         if: always()
         run: |
-          echo "اجرای SheepIt به پایان رسید"
-          echo "زمان: $(date)"
-          echo "Instance: ${{ matrix.instance }}"
+          echo "=== FINAL STATUS REPORT ==="
+          echo ""
+          echo "=== Full Agent Logs ==="
+          cat /tmp/titan.log || echo "No logs available"
+          
+          echo ""
+          echo "=== Process Status ==="
+          ps aux | grep agent | grep -v grep || echo "Agent not running"
+          
+          echo ""
+          echo "=== System Resources ==="
+          echo "Memory:"
+          free -h
+          echo "Disk:"
+          df -h /opt/titanagent
+          
+          echo ""
+          echo "=== Test Summary ==="
+          if pgrep -f "agent.*titannet" > /dev/null; then
+            echo "✅ Agent is running"
+          else
+            echo "❌ Agent is not running"
+          fi
+          
+          echo ""
+          echo "📊 Check your Titan dashboard: https://test4.titannet.io"
+          echo "🔍 Look for this device in Node Management"
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: titan-agent-logs
+          path: /tmp/titan.log
+          retention-days: 7
