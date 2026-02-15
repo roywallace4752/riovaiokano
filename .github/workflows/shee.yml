@@ -1,178 +1,29 @@
-name: Titaniom
+name: Titan Simple Test
 
 on:
-  workflow_dispatch:  # اجرای دستی
-  push:
-    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  titan-agent:
+  test:
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: System Information
-        run: |
-          echo "=== System Info ==="
-          uname -a
-          echo "=== CPU Info ==="
-          lscpu | grep -E 'Model name|CPU\(s\)'
-          echo "=== Memory Info ==="
-          free -h
-          echo "=== Disk Info ==="
-          df -h
-          echo "=== Network Info ==="
-          ip addr show
-
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget unzip curl net-tools
-
-      - name: Download Titan Agent
-        run: |
-          echo "=== Downloading Titan Agent ==="
-          cd /tmp
-          wget https://pcdn.titannet.io/test4/bin/agent-linux.zip
-          ls -lh agent-linux.zip
-
-      - name: Extract and Setup
-        run: |
-          echo "=== Extracting Titan Agent ==="
-          sudo mkdir -p /opt/titanagent
-          sudo unzip /tmp/agent-linux.zip -d /opt/titanagent
-          cd /opt/titanagent
-          ls -la
-          
-          echo "=== Making executable ==="
-          sudo chmod +x ./agent
-          ./agent --version || echo "Version check failed (might be normal)"
-
-      - name: Configure and Run Titan Agent
+      - name: Quick Test
         env:
-          TITAN_KEY: "JEgcMQ9MtjIv"
+          TITAN_KEY: ${{ secrets.TITAN_KEY }}
         run: |
-          echo "=== Starting Titan Agent ==="
-          cd /opt/titanagent
+          # نصب
+          wget -q https://pcdn.titannet.io/test4/bin/agent-linux.zip
+          mkdir -p ~/titan
+          unzip -q agent-linux.zip -d ~/titan
+          cd ~/titan
+          chmod +x agent
           
-          # اجرای agent در background
-          sudo ./agent \
-            --working-dir=/opt/titanagent \
+          # اجرا (20 دقیقه)
+          timeout 1200 ./agent \
+            --working-dir=$HOME/titan \
             --server-url=https://test4-api.titannet.io \
-            --key=${TITAN_KEY} > /tmp/titan.log 2>&1 &
+            --key=${TITAN_KEY} \
+            2>&1 | tee titan.log || true
           
-          AGENT_PID=$!
-          echo "Agent PID: $AGENT_PID"
-          
-          # صبر برای اتصال
-          echo "=== Waiting for connection (30 seconds) ==="
-          sleep 30
-          
-          # چک کردن process
-          if ps -p $AGENT_PID > /dev/null; then
-            echo "✅ Agent is running!"
-          else
-            echo "❌ Agent stopped unexpectedly"
-            exit 1
-          fi
-
-      - name: Monitor Agent Logs
-        run: |
-          echo "=== Agent Logs (First 50 lines) ==="
-          head -n 50 /tmp/titan.log || echo "No logs yet"
-          
-          echo ""
-          echo "=== Recent Logs ==="
-          tail -n 20 /tmp/titan.log || echo "No recent logs"
-          
-          echo ""
-          echo "=== Checking for success indicators ==="
-          if grep -i "connect" /tmp/titan.log; then
-            echo "✅ Connection attempt detected"
-          fi
-          
-          if grep -i "success\|online\|ready" /tmp/titan.log; then
-            echo "✅ Agent appears to be online"
-          fi
-          
-          if grep -i "error\|fail" /tmp/titan.log; then
-            echo "⚠️  Errors detected in logs"
-          fi
-
-      - name: Network Status Check
-        run: |
-          echo "=== Network Connections ==="
-          sudo netstat -tuln | grep ESTABLISHED || echo "No established connections yet"
-          
-          echo ""
-          echo "=== Process Info ==="
-          ps aux | grep agent | grep -v grep || echo "Agent process not found"
-
-      - name: Keep Agent Running (5 minutes test)
-        run: |
-          echo "=== Running for 5 minutes ==="
-          echo "Start time: $(date)"
-          
-          for i in {1..10}; do
-            echo "--- Minute $i/10 ---"
-            sleep 30
-            
-            # نمایش لاگ‌های جدید
-            echo "Latest logs:"
-            tail -n 5 /tmp/titan.log
-            
-            # چک کردن process
-            if ! pgrep -f "agent.*titannet" > /dev/null; then
-              echo "❌ Agent stopped at minute $i"
-              echo "=== Full Logs ==="
-              cat /tmp/titan.log
-              exit 1
-            fi
-            
-            echo "✅ Agent still running"
-            echo ""
-          done
-          
-          echo "End time: $(date)"
-          echo "✅ Test completed successfully!"
-
-      - name: Final Status Report
-        if: always()
-        run: |
-          echo "=== FINAL STATUS REPORT ==="
-          echo ""
-          echo "=== Full Agent Logs ==="
-          cat /tmp/titan.log || echo "No logs available"
-          
-          echo ""
-          echo "=== Process Status ==="
-          ps aux | grep agent | grep -v grep || echo "Agent not running"
-          
-          echo ""
-          echo "=== System Resources ==="
-          echo "Memory:"
-          free -h
-          echo "Disk:"
-          df -h /opt/titanagent
-          
-          echo ""
-          echo "=== Test Summary ==="
-          if pgrep -f "agent.*titannet" > /dev/null; then
-            echo "✅ Agent is running"
-          else
-            echo "❌ Agent is not running"
-          fi
-          
-          echo ""
-          echo "📊 Check your Titan dashboard: https://test4.titannet.io"
-          echo "🔍 Look for this device in Node Management"
-
-      - name: Upload Logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: titan-agent-logs
-          path: /tmp/titan.log
-          retention-days: 7
+          echo "=== Log Output ==="
+          cat titan.log
