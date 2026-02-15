@@ -1,4 +1,4 @@
-name: Tiner
+name: Tner
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ on:
 jobs:
   titan-node:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours max
+    timeout-minutes: 360
     
     steps:
       - name: System Information
@@ -19,162 +19,187 @@ jobs:
           echo "════════════════════════════════════════"
           echo "         SYSTEM INFORMATION"
           echo "════════════════════════════════════════"
-          echo "OS: $(uname -a)"
+          uname -a
           echo "CPU: $(nproc) cores"
-          echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
-          echo "Disk: $(df -h / | awk 'NR==2 {print $4}') free"
-          echo "Public IP: $(curl -s ifconfig.me)"
+          free -h
+          df -h /
+          curl -s ifconfig.me && echo " (Public IP)"
           echo "════════════════════════════════════════"
-          echo ""
 
       - name: Download Titan Agent
         run: |
-          echo "📥 Downloading Titan Agent v0.1.20..."
-          wget -q --show-progress \
-            https://pcdn.titannet.io/titan-agent/v0.1.20/titan-agent-v0.1.20-linux-amd64.tar.gz
+          echo "📥 Downloading Titan Agent..."
           
-          echo "✅ Download completed"
-          ls -lh titan-agent-*.tar.gz
+          # روش اول: استفاده از لینک test4
+          if wget -q --show-progress https://pcdn.titannet.io/test4/bin/agent-linux.zip; then
+            echo "✅ Downloaded via test4 link"
+            DOWNLOAD_FILE="agent-linux.zip"
+          else
+            echo "⚠️  First download failed, trying alternative..."
+            # اگر لینک بالا کار نکرد، از GitHub بگیر
+            wget -q --show-progress https://github.com/Titannet-dao/titan-agent/releases/latest/download/agent-linux-amd64.tar.gz
+            DOWNLOAD_FILE="agent-linux-amd64.tar.gz"
+          fi
+          
+          echo "Download file: $DOWNLOAD_FILE"
+          ls -lh $DOWNLOAD_FILE
 
       - name: Extract and Setup
         run: |
-          echo "📦 Extracting archive..."
-          tar -xzf titan-agent-v0.1.20-linux-amd64.tar.gz
+          echo "📦 Extracting files..."
           
-          echo "📁 Renaming directory..."
-          mv titan-agent-v0.1.20-linux-amd64 titan_core
+          # بررسی نوع فایل دانلود شده
+          if [ -f "agent-linux.zip" ]; then
+            echo "Extracting ZIP file..."
+            unzip -q agent-linux.zip
+            
+            # پیدا کردن دایرکتوری استخراج شده
+            EXTRACT_DIR=$(find . -maxdepth 1 -type d -name "agent*" | head -1)
+            
+            if [ -z "$EXTRACT_DIR" ]; then
+              echo "Creating titan_core directory..."
+              mkdir -p titan_core
+              mv agent titan_core/ 2>/dev/null || mv ./agent* titan_core/ 2>/dev/null
+            else
+              echo "Renaming $EXTRACT_DIR to titan_core..."
+              mv "$EXTRACT_DIR" titan_core
+            fi
+            
+          elif [ -f "agent-linux-amd64.tar.gz" ]; then
+            echo "Extracting TAR.GZ file..."
+            tar -xzf agent-linux-amd64.tar.gz
+            
+            EXTRACT_DIR=$(find . -maxdepth 1 -type d -name "*agent*" | head -1)
+            if [ -n "$EXTRACT_DIR" ]; then
+              mv "$EXTRACT_DIR" titan_core
+            else
+              mkdir -p titan_core
+              mv agent* titan_core/ 2>/dev/null || true
+            fi
+          fi
+          
+          cd titan_core
+          
+          echo "📁 Directory contents:"
+          ls -lah
           
           echo "🔧 Setting permissions..."
-          chmod +x titan_core/titan-agent
+          # پیدا کردن فایل agent
+          AGENT_FILE=$(find . -type f -name "agent" -o -name "titan-agent" | head -1)
           
-          echo "ℹ️ Binary info:"
-          file titan_core/titan-agent
+          if [ -z "$AGENT_FILE" ]; then
+            echo "❌ Agent binary not found!"
+            echo "Current directory structure:"
+            find . -type f
+            exit 1
+          fi
           
-          echo "✅ Setup completed"
+          chmod +x "$AGENT_FILE"
+          
+          # ایجاد symlink برای راحتی
+          ln -sf "$AGENT_FILE" agent 2>/dev/null || true
+          
+          echo "✅ Agent binary: $AGENT_FILE"
+          file "$AGENT_FILE"
 
-      - name: Bind Device to Account
+      - name: Start Titan Agent
         env:
           TITAN_HASH: ${{ secrets.TITAN_KEY }}
         run: |
           cd titan_core
           
-          echo "🔗 Binding device to Titan Network..."
+          echo "🚀 Starting Titan Agent..."
           echo "Hash: ${TITAN_HASH:0:4}***${TITAN_HASH: -4}"
           
-          ./titan-agent bind \
-            --hash=${TITAN_HASH} \
-            https://api-testnet.titannet.io/api/v2/device/binding
+          # پیدا کردن binary
+          AGENT_BIN=$(find . -type f \( -name "agent" -o -name "titan-agent" \) -executable | head -1)
           
-          if [ $? -eq 0 ]; then
-            echo "✅ Device bound successfully!"
-          else
-            echo "❌ Binding failed!"
+          if [ -z "$AGENT_BIN" ]; then
+            echo "❌ Executable agent not found!"
             exit 1
           fi
-
-      - name: Start Titan Daemon
-        run: |
-          cd titan_core
           
-          echo "🚀 Starting Titan daemon..."
-          ./titan-agent daemon start --init > titan.log 2>&1 &
-          DAEMON_PID=$!
-          echo $DAEMON_PID > daemon.pid
+          echo "Using binary: $AGENT_BIN"
           
-          echo "Daemon PID: $DAEMON_PID"
+          # اجرای agent
+          nohup "$AGENT_BIN" \
+            --working-dir=$(pwd) \
+            --server-url=https://test4-api.titannet.io \
+            --key=${TITAN_HASH} \
+            > titan-stdout.log 2> titan-stderr.log &
+          
+          AGENT_PID=$!
+          echo $AGENT_PID > agent.pid
+          
+          echo "Agent PID: $AGENT_PID"
           
           echo "⏳ Waiting for initialization (30s)..."
           sleep 30
           
-          # Check if process is running
-          if ps -p $DAEMON_PID > /dev/null; then
-            echo "✅ Daemon started successfully!"
+          if ps -p $AGENT_PID > /dev/null; then
+            echo "✅ Agent is running!"
           else
-            echo "❌ Daemon failed to start!"
-            echo "=== Error Log ==="
-            cat titan.log
+            echo "❌ Agent stopped!"
+            echo "=== STDOUT ==="
+            cat titan-stdout.log
+            echo "=== STDERR ==="
+            cat titan-stderr.log
             exit 1
           fi
 
-      - name: Display Node Information
-        run: |
-          cd titan_core
-          
-          echo "════════════════════════════════════════"
-          echo "         NODE INFORMATION"
-          echo "════════════════════════════════════════"
-          ./titan-agent info || echo "Info command failed (might be normal)"
-          echo ""
-
-      - name: Monitor Node Activity
+      - name: Monitor Agent
         run: |
           cd titan_core
           
           RUNTIME_HOURS=${{ github.event.inputs.run_duration || '5' }}
           RUNTIME_SECONDS=$((RUNTIME_HOURS * 3600))
-          DAEMON_PID=$(cat daemon.pid)
+          AGENT_PID=$(cat agent.pid)
           
           echo "════════════════════════════════════════"
-          echo "    MONITORING NODE FOR ${RUNTIME_HOURS}h"
+          echo "   MONITORING FOR ${RUNTIME_HOURS} HOURS"
           echo "════════════════════════════════════════"
           echo "Start: $(date)"
-          echo "Estimated end: $(date -d "+${RUNTIME_HOURS} hours")"
           echo "Dashboard: https://edge.titannet.io/deviceManagement"
           echo "════════════════════════════════════════"
-          echo ""
           
-          # Function to display status
-          show_status() {
-            local elapsed=$1
-            local hours=$((elapsed / 3600))
-            local minutes=$(((elapsed % 3600) / 60))
-            
-            echo ""
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "⏰ Runtime: ${hours}h ${minutes}m | $(date '+%H:%M:%S')"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            
-            # Process check
-            if ps -p $DAEMON_PID > /dev/null 2>&1; then
-              echo "✅ Status: RUNNING (PID: $DAEMON_PID)"
-            else
-              echo "❌ Status: STOPPED"
-              return 1
-            fi
-            
-            # Resource usage
-            echo "💻 Resources:"
-            ps -p $DAEMON_PID -o %cpu,%mem,vsz,rss,cmd 2>/dev/null | tail -n 1 | \
-              awk '{printf "   CPU: %s%% | MEM: %s%% | VSZ: %dMB | RSS: %dMB\n", $1, $2, $3/1024, $4/1024}'
-            
-            # Recent logs
-            echo "📋 Recent activity (last 5 lines):"
-            tail -n 5 titan.log | sed 's/^/   /'
-            
-            # Network connections
-            echo "🌐 Network:"
-            netstat -tn 2>/dev/null | grep -i established | wc -l | \
-              awk '{print "   Active connections: "$1}'
-            
-            # Files in directory
-            echo "📁 Working directory:"
-            ls -lh | wc -l | awk '{print "   Files: "$1}'
-            
-            return 0
-          }
-          
-          # Main monitoring loop
           INTERVAL=300  # 5 minutes
           ELAPSED=0
           
           while [ $ELAPSED -lt $RUNTIME_SECONDS ]; do
-            if ! show_status $ELAPSED; then
-              echo ""
-              echo "❌ Daemon stopped unexpectedly!"
-              echo "=== Final Log ==="
-              cat titan.log
+            HOURS=$((ELAPSED / 3600))
+            MINUTES=$(((ELAPSED % 3600) / 60))
+            
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "⏰ Runtime: ${HOURS}h ${MINUTES}m"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            
+            # Process check
+            if ! ps -p $AGENT_PID > /dev/null 2>&1; then
+              echo "❌ Agent stopped!"
+              cat titan-stdout.log
+              cat titan-stderr.log
               exit 1
             fi
+            
+            echo "✅ Status: RUNNING"
+            
+            # Resources
+            echo "💻 Resources:"
+            ps -p $AGENT_PID -o %cpu,%mem,vsz,rss | tail -n 1 | \
+              awk '{printf "   CPU: %s%% | MEM: %s%% | VSZ: %.1fMB | RSS: %.1fMB\n", $1, $2, $3/1024, $4/1024}'
+            
+            # Logs
+            echo "📋 Recent STDOUT:"
+            tail -n 3 titan-stdout.log 2>/dev/null | sed 's/^/   /' || echo "   No logs"
+            
+            echo "📋 Recent STDERR:"
+            tail -n 2 titan-stderr.log 2>/dev/null | sed 's/^/   /' || echo "   No errors"
+            
+            # Network
+            echo "🌐 Network:"
+            netstat -tn 2>/dev/null | grep ESTABLISHED | wc -l | \
+              awk '{print "   Connections: "$1}'
             
             sleep $INTERVAL
             ELAPSED=$((ELAPSED + INTERVAL))
@@ -182,76 +207,55 @@ jobs:
           
           echo ""
           echo "════════════════════════════════════════"
-          echo "✅ Monitoring completed successfully!"
-          echo "End: $(date)"
+          echo "✅ Monitoring completed!"
           echo "════════════════════════════════════════"
 
-      - name: Final Status & Cleanup
+      - name: Final Report
         if: always()
         run: |
-          cd titan_core
+          cd titan_core 2>/dev/null || exit 0
           
           echo ""
           echo "════════════════════════════════════════"
-          echo "         FINAL STATUS REPORT"
+          echo "         FINAL REPORT"
           echo "════════════════════════════════════════"
           
-          # Process status
-          if [ -f daemon.pid ]; then
-            DAEMON_PID=$(cat daemon.pid)
-            if ps -p $DAEMON_PID > /dev/null 2>&1; then
-              echo "✅ Daemon: RUNNING"
-              echo ""
-              echo "🛑 Stopping daemon gracefully..."
-              ./titan-agent daemon stop || kill $DAEMON_PID
-              sleep 3
+          if [ -f agent.pid ]; then
+            AGENT_PID=$(cat agent.pid)
+            if ps -p $AGENT_PID > /dev/null 2>&1; then
+              echo "✅ Agent: RUNNING"
+              pkill -P $AGENT_PID || true
+              kill $AGENT_PID 2>/dev/null || true
             else
-              echo "⚠️  Daemon: NOT RUNNING"
+              echo "⚠️  Agent: STOPPED"
             fi
           fi
           
           echo ""
-          echo "📊 Statistics:"
+          echo "📄 Complete STDOUT:"
           echo "─────────────────────────────────────────"
-          
-          # Log file size
-          if [ -f titan.log ]; then
-            LOG_SIZE=$(du -h titan.log | cut -f1)
-            LOG_LINES=$(wc -l < titan.log)
-            echo "Log size: $LOG_SIZE ($LOG_LINES lines)"
-          fi
-          
-          # Uptime from log
-          if grep -q "started" titan.log 2>/dev/null; then
-            echo "✓ Daemon started successfully"
-          fi
-          
-          # Errors check
-          ERROR_COUNT=$(grep -i "error\|fail" titan.log 2>/dev/null | wc -l)
-          echo "Errors in log: $ERROR_COUNT"
+          cat titan-stdout.log 2>/dev/null || echo "No stdout"
           
           echo ""
-          echo "📄 Complete Log Output:"
+          echo "📄 Complete STDERR:"
           echo "─────────────────────────────────────────"
-          cat titan.log 2>/dev/null || echo "No log file found"
+          cat titan-stderr.log 2>/dev/null || echo "No stderr"
           
           echo ""
           echo "════════════════════════════════════════"
           echo "💡 Next Steps:"
           echo "════════════════════════════════════════"
-          echo "1. Check dashboard: https://edge.titannet.io/deviceManagement"
+          echo "1. Check: https://edge.titannet.io/deviceManagement"
           echo "2. Device should appear within 5-15 minutes"
-          echo "3. Download logs from Artifacts tab if needed"
-          echo "4. If successful, deploy to your server!"
+          echo "3. Download logs from Artifacts if needed"
           echo "════════════════════════════════════════"
 
       - name: Upload Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: titan-node-logs-${{ github.run_number }}
+          name: titan-logs-${{ github.run_number }}
           path: |
-            titan_core/titan.log
             titan_core/*.log
           retention-days: 7
           if-no-files-found: warn
