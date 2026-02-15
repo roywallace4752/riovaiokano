@@ -1,52 +1,257 @@
-name: Run Titron
+name: Tiner
 
 on:
-  workflow_dispatch: # این گزینه باعث می‌شود فقط دستی اجرا شود تا کنترل داشته باشید
+  workflow_dispatch:
+    inputs:
+      run_duration:
+        description: 'Runtime in hours (max 6)'
+        required: false
+        default: '5'
 
 jobs:
-  titan-job:
+  titan-node:
     runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max
     
     steps:
-    - name: Download Titan Agent
-      run: |
-        echo "Downloading Titan Agent..."
-        wget -q https://pcdn.titannet.io/titan-agent/v0.1.20/titan-agent-v0.1.20-linux-amd64.tar.gz
-        
-    - name: Extract and Setup
-      run: |
-        echo "Extracting files..."
-        tar -xf titan-agent-v0.1.20-linux-amd64.tar.gz
-        
-        # تغییر نام پوشه برای دسترسی راحت‌تر
-        mv titan-agent-v0.1.20-linux-amd64 titan_core
-        
-        # دادن دسترسی اجرایی
-        chmod +x titan_core/titan-agent
-        
-    - name: Bind Account
-      run: |
-        cd titan_core
-        echo "Binding to account with ID: JEgcMQ9MtjIv"
-        
-        # اتصال به اکانت شما با استفاده از هش کدی که دادید
-        ./titan-agent bind --hash=JEgcMQ9MtjIv https://api-testnet.titannet.io/api/v2/device/binding
+      - name: System Information
+        run: |
+          echo "════════════════════════════════════════"
+          echo "         SYSTEM INFORMATION"
+          echo "════════════════════════════════════════"
+          echo "OS: $(uname -a)"
+          echo "CPU: $(nproc) cores"
+          echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
+          echo "Disk: $(df -h / | awk 'NR==2 {print $4}') free"
+          echo "Public IP: $(curl -s ifconfig.me)"
+          echo "════════════════════════════════════════"
+          echo ""
 
-    - name: Run Daemon and Monitor
-      run: |
-        cd titan_core
-        
-        # اجرای سرویس در پس‌زمینه
-        ./titan-agent daemon start --init > titan.log 2>&1 &
-        
-        echo "Node started. Waiting for initialization..."
-        sleep 15
-        
-        # نمایش اطلاعات نود برای اطمینان از صحت اجرا
-        ./titan-agent info
-        
-        echo "System is running. Keeping the runner alive..."
-        
-        # نمایش لاگ‌ها و زنده نگه داشتن اکشن
-        # محدودیت گیت‌هاب برای هر جاب ۶ ساعت است
-        timeout 21000s tail -f titan.log
+      - name: Download Titan Agent
+        run: |
+          echo "📥 Downloading Titan Agent v0.1.20..."
+          wget -q --show-progress \
+            https://pcdn.titannet.io/titan-agent/v0.1.20/titan-agent-v0.1.20-linux-amd64.tar.gz
+          
+          echo "✅ Download completed"
+          ls -lh titan-agent-*.tar.gz
+
+      - name: Extract and Setup
+        run: |
+          echo "📦 Extracting archive..."
+          tar -xzf titan-agent-v0.1.20-linux-amd64.tar.gz
+          
+          echo "📁 Renaming directory..."
+          mv titan-agent-v0.1.20-linux-amd64 titan_core
+          
+          echo "🔧 Setting permissions..."
+          chmod +x titan_core/titan-agent
+          
+          echo "ℹ️ Binary info:"
+          file titan_core/titan-agent
+          
+          echo "✅ Setup completed"
+
+      - name: Bind Device to Account
+        env:
+          TITAN_HASH: ${{ secrets.TITAN_KEY }}
+        run: |
+          cd titan_core
+          
+          echo "🔗 Binding device to Titan Network..."
+          echo "Hash: ${TITAN_HASH:0:4}***${TITAN_HASH: -4}"
+          
+          ./titan-agent bind \
+            --hash=${TITAN_HASH} \
+            https://api-testnet.titannet.io/api/v2/device/binding
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Device bound successfully!"
+          else
+            echo "❌ Binding failed!"
+            exit 1
+          fi
+
+      - name: Start Titan Daemon
+        run: |
+          cd titan_core
+          
+          echo "🚀 Starting Titan daemon..."
+          ./titan-agent daemon start --init > titan.log 2>&1 &
+          DAEMON_PID=$!
+          echo $DAEMON_PID > daemon.pid
+          
+          echo "Daemon PID: $DAEMON_PID"
+          
+          echo "⏳ Waiting for initialization (30s)..."
+          sleep 30
+          
+          # Check if process is running
+          if ps -p $DAEMON_PID > /dev/null; then
+            echo "✅ Daemon started successfully!"
+          else
+            echo "❌ Daemon failed to start!"
+            echo "=== Error Log ==="
+            cat titan.log
+            exit 1
+          fi
+
+      - name: Display Node Information
+        run: |
+          cd titan_core
+          
+          echo "════════════════════════════════════════"
+          echo "         NODE INFORMATION"
+          echo "════════════════════════════════════════"
+          ./titan-agent info || echo "Info command failed (might be normal)"
+          echo ""
+
+      - name: Monitor Node Activity
+        run: |
+          cd titan_core
+          
+          RUNTIME_HOURS=${{ github.event.inputs.run_duration || '5' }}
+          RUNTIME_SECONDS=$((RUNTIME_HOURS * 3600))
+          DAEMON_PID=$(cat daemon.pid)
+          
+          echo "════════════════════════════════════════"
+          echo "    MONITORING NODE FOR ${RUNTIME_HOURS}h"
+          echo "════════════════════════════════════════"
+          echo "Start: $(date)"
+          echo "Estimated end: $(date -d "+${RUNTIME_HOURS} hours")"
+          echo "Dashboard: https://edge.titannet.io/deviceManagement"
+          echo "════════════════════════════════════════"
+          echo ""
+          
+          # Function to display status
+          show_status() {
+            local elapsed=$1
+            local hours=$((elapsed / 3600))
+            local minutes=$(((elapsed % 3600) / 60))
+            
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "⏰ Runtime: ${hours}h ${minutes}m | $(date '+%H:%M:%S')"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            
+            # Process check
+            if ps -p $DAEMON_PID > /dev/null 2>&1; then
+              echo "✅ Status: RUNNING (PID: $DAEMON_PID)"
+            else
+              echo "❌ Status: STOPPED"
+              return 1
+            fi
+            
+            # Resource usage
+            echo "💻 Resources:"
+            ps -p $DAEMON_PID -o %cpu,%mem,vsz,rss,cmd 2>/dev/null | tail -n 1 | \
+              awk '{printf "   CPU: %s%% | MEM: %s%% | VSZ: %dMB | RSS: %dMB\n", $1, $2, $3/1024, $4/1024}'
+            
+            # Recent logs
+            echo "📋 Recent activity (last 5 lines):"
+            tail -n 5 titan.log | sed 's/^/   /'
+            
+            # Network connections
+            echo "🌐 Network:"
+            netstat -tn 2>/dev/null | grep -i established | wc -l | \
+              awk '{print "   Active connections: "$1}'
+            
+            # Files in directory
+            echo "📁 Working directory:"
+            ls -lh | wc -l | awk '{print "   Files: "$1}'
+            
+            return 0
+          }
+          
+          # Main monitoring loop
+          INTERVAL=300  # 5 minutes
+          ELAPSED=0
+          
+          while [ $ELAPSED -lt $RUNTIME_SECONDS ]; do
+            if ! show_status $ELAPSED; then
+              echo ""
+              echo "❌ Daemon stopped unexpectedly!"
+              echo "=== Final Log ==="
+              cat titan.log
+              exit 1
+            fi
+            
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+          
+          echo ""
+          echo "════════════════════════════════════════"
+          echo "✅ Monitoring completed successfully!"
+          echo "End: $(date)"
+          echo "════════════════════════════════════════"
+
+      - name: Final Status & Cleanup
+        if: always()
+        run: |
+          cd titan_core
+          
+          echo ""
+          echo "════════════════════════════════════════"
+          echo "         FINAL STATUS REPORT"
+          echo "════════════════════════════════════════"
+          
+          # Process status
+          if [ -f daemon.pid ]; then
+            DAEMON_PID=$(cat daemon.pid)
+            if ps -p $DAEMON_PID > /dev/null 2>&1; then
+              echo "✅ Daemon: RUNNING"
+              echo ""
+              echo "🛑 Stopping daemon gracefully..."
+              ./titan-agent daemon stop || kill $DAEMON_PID
+              sleep 3
+            else
+              echo "⚠️  Daemon: NOT RUNNING"
+            fi
+          fi
+          
+          echo ""
+          echo "📊 Statistics:"
+          echo "─────────────────────────────────────────"
+          
+          # Log file size
+          if [ -f titan.log ]; then
+            LOG_SIZE=$(du -h titan.log | cut -f1)
+            LOG_LINES=$(wc -l < titan.log)
+            echo "Log size: $LOG_SIZE ($LOG_LINES lines)"
+          fi
+          
+          # Uptime from log
+          if grep -q "started" titan.log 2>/dev/null; then
+            echo "✓ Daemon started successfully"
+          fi
+          
+          # Errors check
+          ERROR_COUNT=$(grep -i "error\|fail" titan.log 2>/dev/null | wc -l)
+          echo "Errors in log: $ERROR_COUNT"
+          
+          echo ""
+          echo "📄 Complete Log Output:"
+          echo "─────────────────────────────────────────"
+          cat titan.log 2>/dev/null || echo "No log file found"
+          
+          echo ""
+          echo "════════════════════════════════════════"
+          echo "💡 Next Steps:"
+          echo "════════════════════════════════════════"
+          echo "1. Check dashboard: https://edge.titannet.io/deviceManagement"
+          echo "2. Device should appear within 5-15 minutes"
+          echo "3. Download logs from Artifacts tab if needed"
+          echo "4. If successful, deploy to your server!"
+          echo "════════════════════════════════════════"
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: titan-node-logs-${{ github.run_number }}
+          path: |
+            titan_core/titan.log
+            titan_core/*.log
+          retention-days: 7
+          if-no-files-found: warn
