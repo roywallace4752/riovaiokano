@@ -1,29 +1,52 @@
-name: Titan Simple Test
+name: Run Titron
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # این گزینه باعث می‌شود فقط دستی اجرا شود تا کنترل داشته باشید
 
 jobs:
-  test:
+  titan-job:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Quick Test
-        env:
-          TITAN_KEY: ${{ secrets.TITAN_KEY }}
-        run: |
-          # نصب
-          wget -q https://pcdn.titannet.io/test4/bin/agent-linux.zip
-          mkdir -p ~/titan
-          unzip -q agent-linux.zip -d ~/titan
-          cd ~/titan
-          chmod +x agent
-          
-          # اجرا (20 دقیقه)
-          timeout 1200 ./agent \
-            --working-dir=$HOME/titan \
-            --server-url=https://test4-api.titannet.io \
-            --key=${TITAN_KEY} \
-            2>&1 | tee titan.log || true
-          
-          echo "=== Log Output ==="
-          cat titan.log
+    - name: Download Titan Agent
+      run: |
+        echo "Downloading Titan Agent..."
+        wget -q https://pcdn.titannet.io/titan-agent/v0.1.20/titan-agent-v0.1.20-linux-amd64.tar.gz
+        
+    - name: Extract and Setup
+      run: |
+        echo "Extracting files..."
+        tar -xf titan-agent-v0.1.20-linux-amd64.tar.gz
+        
+        # تغییر نام پوشه برای دسترسی راحت‌تر
+        mv titan-agent-v0.1.20-linux-amd64 titan_core
+        
+        # دادن دسترسی اجرایی
+        chmod +x titan_core/titan-agent
+        
+    - name: Bind Account
+      run: |
+        cd titan_core
+        echo "Binding to account with ID: JEgcMQ9MtjIv"
+        
+        # اتصال به اکانت شما با استفاده از هش کدی که دادید
+        ./titan-agent bind --hash=JEgcMQ9MtjIv https://api-testnet.titannet.io/api/v2/device/binding
+
+    - name: Run Daemon and Monitor
+      run: |
+        cd titan_core
+        
+        # اجرای سرویس در پس‌زمینه
+        ./titan-agent daemon start --init > titan.log 2>&1 &
+        
+        echo "Node started. Waiting for initialization..."
+        sleep 15
+        
+        # نمایش اطلاعات نود برای اطمینان از صحت اجرا
+        ./titan-agent info
+        
+        echo "System is running. Keeping the runner alive..."
+        
+        # نمایش لاگ‌ها و زنده نگه داشتن اکشن
+        # محدودیت گیت‌هاب برای هر جاب ۶ ساعت است
+        timeout 21000s tail -f titan.log
