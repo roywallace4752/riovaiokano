@@ -3,7 +3,7 @@ on:
   workflow_dispatch: # اجرای دستی برای تست
 
 jobs:
-  earn-bandwidth:
+  ear-dth:
     runs-on: ubuntu-latest
     steps:
       - name: Setup Docker and Run Tzer
