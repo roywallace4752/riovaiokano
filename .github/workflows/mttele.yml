@@ -1,0 +1,66 @@
+name: Ultimate High-Speed MToxy (Taunnel)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-proxy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350 
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Enable TCP BBR
+        run: |
+          sudo modprobe tcp_bbr
+          echo "net.core.default_qdisc=fq" | sudo tee -a /etc/sysctl.conf
+          echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.conf
+          sudo sysctl -p
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          tags: tag:ci # حتما این تگ را در پنل Tailscale تعریف کنید [۸۰۱، ۸۵۶]
+
+      - name: Install mtg & Generate Dynamic Secret
+        run: |
+          # دانلود آخرین نسخه موتور mtg v2 [۱۶]
+          VERSION=$(curl -s https://api.github.com/repos/9seconds/mtg/releases/latest | grep tag_name | cut -d '"' -f 4 | sed 's/v//')
+          wget https://github.com/9seconds/mtg/releases/download/v${VERSION}/mtg-${VERSION}-linux-amd64.tar.gz
+          tar -xf mtg-${VERSION}-linux-amd64.tar.gz
+          sudo mv mtg /usr/local/bin/
+
+          # تولید رمز ee-secret برای دامنه microsoft.com جهت تقلید ترافیک [۷۱۸، ۷۳۲]
+          DYNAMIC_SECRET=$(mtg generate-secret --hex microsoft.com)
+          
+          # مخفی‌سازی رمز در لاگ‌ها برای امنیت بیشتر [۷۳۷]
+          echo "::add-mask::$DYNAMIC_SECRET"
+          echo "Generated Secret: $DYNAMIC_SECRET"
+          
+          # ذخیره رمز برای استفاده در مرحله بعد
+          echo "MTG_SECRET=$DYNAMIC_SECRET" >> $GITHUB_ENV
+
+      - name: Start Proxy and Funnel
+        run: |
+          # اجرای mtg روی پورت داخلی ۳۰۰۰ [۷۳۳]
+          mtg simple-run -c 16384 127.0.0.1:3000 "${{ env.MTG_SECRET }}" &
+          
+          # فعال‌سازی Funnel روی پورت ۴۴۳ با حالت تایید TLS [۷۲۵، ۸۱۸]
+          # این دستور ترافیک پورت ۴۴۳ اینترنت را به ۳۰۰۰ داخلی می‌فرستد
+          sudo tailscale funnel --bg --tls-terminated-tcp 443 3000
+          
+          echo "------------------------------------------------------------"
+          echo "SUCCESS: MTProto Proxy is running on port 443"
+          echo "Your endpoint (FQDN) is:"
+          tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//'
+          echo "Use the Secret printed above in your Telegram client."
+          echo "------------------------------------------------------------"
+
+      # ۵. زنده نگه داشتن رانر برای تست (تا ۵.۸ ساعت) [۷۲۱]
+      - name: Keepalive Runner
+        run: |
+          echo "Proxy is live. Do NOT close this action to keep it running."
+          sleep 21000 
