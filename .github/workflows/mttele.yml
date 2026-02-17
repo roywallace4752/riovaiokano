@@ -1,7 +1,7 @@
-name: Ultimate High-Speed MToxy (Taunnel)
+name: Ultimate High-Speed MTG Proxy (Fixed & Optimized)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: 
 
 jobs:
   run-proxy:
@@ -12,6 +12,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # ۱. بهینه‌سازی شبکه: فعال‌سازی BBR برای سرعت فوق‌العاده [۷۳۴]
       - name: Enable TCP BBR
         run: |
           sudo modprobe tcp_bbr
@@ -19,48 +20,55 @@ jobs:
           echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.conf
           sudo sysctl -p
 
+      # ۲. اتصال به Tailscale (رفع هشدار با حفظ قابلیت استفاده از Auth Key) [۸۵۹]
       - name: Connect to Tailscale
         uses: tailscale/github-action@v3
         with:
           authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
-          tags: tag:ci # حتما این تگ را در پنل Tailscale تعریف کنید [۸۰۱، ۸۵۶]
+          tags: tag:ci
 
+      # ۳. نصب mtg با متد جستجوی هوشمند فایل (حل خطای mv) [۱۶، ۷۳۳]
       - name: Install mtg & Generate Dynamic Secret
         run: |
-          # دانلود آخرین نسخه موتور mtg v2 [۱۶]
+          # پیدا کردن آخرین نسخه
           VERSION=$(curl -s https://api.github.com/repos/9seconds/mtg/releases/latest | grep tag_name | cut -d '"' -f 4 | sed 's/v//')
           wget https://github.com/9seconds/mtg/releases/download/v${VERSION}/mtg-${VERSION}-linux-amd64.tar.gz
+          
+          # استخراج فایل
           tar -xf mtg-${VERSION}-linux-amd64.tar.gz
-          sudo mv mtg /usr/local/bin/
+          
+          # پیدا کردن فایل اجرایی mtg در هر جا که استخراج شده باشد و انتقال به مسیر اصلی [۷۳۳]
+          BINARY_PATH=$(find . -name "mtg" -type f | head -n 1)
+          sudo mv "$BINARY_PATH" /usr/local/bin/mtg
+          sudo chmod +x /usr/local/bin/mtg
 
-          # تولید رمز ee-secret برای دامنه microsoft.com جهت تقلید ترافیک [۷۱۸، ۷۳۲]
+          # تولید رمز Fake-TLS برای مایکروسافت [۷۱۸، ۷۳۲]
           DYNAMIC_SECRET=$(mtg generate-secret --hex microsoft.com)
           
-          # مخفی‌سازی رمز در لاگ‌ها برای امنیت بیشتر [۷۳۷]
+          # مخفی‌سازی در لاگ و ذخیره در محیط اجرا [۷۳۷]
           echo "::add-mask::$DYNAMIC_SECRET"
-          echo "Generated Secret: $DYNAMIC_SECRET"
-          
-          # ذخیره رمز برای استفاده در مرحله بعد
           echo "MTG_SECRET=$DYNAMIC_SECRET" >> $GITHUB_ENV
+          echo "Generated Secret: $DYNAMIC_SECRET"
 
+      # ۴. اجرای پروکسی و فعال‌سازی Funnel روی پورت ۴۴۳ [۷۲۵، ۷۳۳]
       - name: Start Proxy and Funnel
         run: |
-          # اجرای mtg روی پورت داخلی ۳۰۰۰ [۷۳۳]
+          # اجرای mtg در پس‌زمینه [۷۳۳]
           mtg simple-run -c 16384 127.0.0.1:3000 "${{ env.MTG_SECRET }}" &
           
-          # فعال‌سازی Funnel روی پورت ۴۴۳ با حالت تایید TLS [۷۲۵، ۸۱۸]
-          # این دستور ترافیک پورت ۴۴۳ اینترنت را به ۳۰۰۰ داخلی می‌فرستد
+          # فعال‌سازی Funnel (حتماً باید در ACL تل‌اسکیل اجازه داده شده باشد) [۸۳۲]
           sudo tailscale funnel --bg --tls-terminated-tcp 443 3000
           
           echo "------------------------------------------------------------"
-          echo "SUCCESS: MTProto Proxy is running on port 443"
-          echo "Your endpoint (FQDN) is:"
-          tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//'
-          echo "Use the Secret printed above in your Telegram client."
+          echo "SUCCESS: MTProto Proxy is now LIVE on port 443"
+          echo "Your Telegram Connection Details:"
+          echo "Server (Host): $(tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//')"
+          echo "Port: 443"
+          echo "Secret: ${{ env.MTG_SECRET }}"
           echo "------------------------------------------------------------"
 
-      # ۵. زنده نگه داشتن رانر برای تست (تا ۵.۸ ساعت) [۷۲۱]
+      # ۵. زنده نگه داشتن رانر [۷۲۱]
       - name: Keepalive Runner
         run: |
-          echo "Proxy is live. Do NOT close this action to keep it running."
-          sleep 21000 
+          echo "Running... The proxy will stay active for about 6 hours."
+          sleep 21000
