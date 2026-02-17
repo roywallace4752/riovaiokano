@@ -1,18 +1,18 @@
-name: Ultimate MTProto Proxy (Public Test Mode)
+name: Final High-Speed MTProto Proxy
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch: # اجرای دستی برای امنیت و تست [۷۳۳]
 
 jobs:
   run-proxy:
     runs-on: ubuntu-latest
-    timeout-minutes: 350 
+    timeout-minutes: 350 # حداکثر زمان مجاز رانر (حدود ۶ ساعت) [۷۲۱]
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # ۱. بهینه‌سازی شبکه برای سرعت بالا در ایران [۷۳۴]
+      # ۱. بهینه‌سازی شبکه: فعال‌سازی BBR برای پایداری در شبکه ایران [۷۳۴]
       - name: Enable TCP BBR
         run: |
           sudo modprobe tcp_bbr
@@ -20,54 +20,54 @@ jobs:
           echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.conf
           sudo sysctl -p
 
-      # ۲. اتصال به Tailscale با تگ مخصوص [۸۵۹]
+      # ۲. اتصال به Tailscale با استفاده از Auth Key و تگ CI [۸۵۷، ۸۵۹]
       - name: Connect to Tailscale
         uses: tailscale/github-action@v3
         with:
           authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
           tags: tag:ci
 
-      # ۳. نصب mtg و تولید رمز (بدون ماسک کردن برای نمایش در لاگ) [۱۶، ۷۳۳]
-      - name: Install mtg & Generate Public Secret
+      # ۳. نصب mtg و تولید رمز ۳۲ کاراکتری ساده (جهت هماهنگی با Funnel TLS) [۱۶، ۱۷، ۷۳۳]
+      - name: Install mtg & Generate Plain Secret
         run: |
+          # دانلود آخرین نسخه پایدار
           VERSION=$(curl -s https://api.github.com/repos/9seconds/mtg/releases/latest | grep tag_name | cut -d '"' -f 4 | sed 's/v//')
           wget https://github.com/9seconds/mtg/releases/download/v${VERSION}/mtg-${VERSION}-linux-amd64.tar.gz
           tar -xf mtg-${VERSION}-linux-amd64.tar.gz
           
-          # پیدا کردن فایل اجرایی در پوشه‌های استخراج شده [۷۳۳]
+          # پیدا کردن خودکار فایل اجرایی و انتقال به مسیر سیستم [۷۳۳]
           BINARY_PATH=$(find . -name "mtg" -type f | head -n 1)
           sudo mv "$BINARY_PATH" /usr/local/bin/mtg
           sudo chmod +x /usr/local/bin/mtg
 
-          # تولید ee-secret برای مایکروسافت (Fake-TLS 1.3) [۷۱۸]
-          DYNAMIC_SECRET=$(mtg generate-secret --hex microsoft.com)
-          
-          # چاپ مستقیم در لاگ برای کپی کردن کلاینت [۷۳۷]
-          echo "------------------------------------------------------------"
-          echo "YOUR MTPROTO SECRET IS: $DYNAMIC_SECRET"
-          echo "------------------------------------------------------------"
-          
-          # ذخیره برای استفاده در مرحله بعد
+          # تولید یک Plain Hex Secret (بدون پیشوند ee برای جلوگیری از تداخل TLS) [۱۷]
+          DYNAMIC_SECRET=$(openssl rand -hex 16)
           echo "MTG_SECRET=$DYNAMIC_SECRET" >> $GITHUB_ENV
+          
+          echo "------------------------------------------------------------"
+          echo "GENEREATED SECRET: $DYNAMIC_SECRET"
+          echo "------------------------------------------------------------"
 
-      # ۴. اجرای پروکسی و Funnel روی پورت ۴۴۳ [۷۲۵، ۸۳۶]
+      # ۴. اجرای mtg و فعال‌سازی Funnel روی پورت ۴۴۳ [۷۲۵، ۷۳۳، ۸۳۶]
       - name: Start Proxy and Funnel
         run: |
-          # اجرای موتور mtg روی پورت ۳۰۰۰ [۷۳۳]
+          # اجرای mtg روی پورت داخلی ۳۰۰۰ [۷۳۳]
+          # استفاده از حالت simple-run برای کارایی بالاتر [۱۹]
           mtg simple-run -c 16384 127.0.0.1:3000 "${{ env.MTG_SECRET }}" &
           
-          # فعال‌سازی Funnel (با تنظیمات ACL جدید خطایی نخواهد داد) [۸۳۲]
+          # فعال‌سازی Funnel: هدایت ترافیک TLS پورت ۴۴۳ به ۳۰۰۰ داخلی [۷۲۵، ۸۱۸]
           sudo tailscale funnel --bg --tls-terminated-tcp 443 3000
           
           echo "------------------------------------------------------------"
-          echo "SUCCESS: MTProto Proxy is now LIVE on port 443"
-          echo "Server (Host): $(tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//')"
+          echo "SUCCESS: MTProto Proxy is LIVE on port 443"
+          echo "Telegram Connection Details:"
+          echo "Server: $(tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//')"
           echo "Port: 443"
           echo "Secret: ${{ env.MTG_SECRET }}"
           echo "------------------------------------------------------------"
 
-      # ۵. زنده نگه داشتن رانر برای استفاده [۷۲۱]
+      # ۵. زنده نگه داشتن رانر [۷۲۱]
       - name: Keepalive Runner
         run: |
-          echo "The proxy will be active for 6 hours. Enjoy!"
+          echo "The proxy will stay active for ~6 hours. Do not close this tab."
           sleep 21000
