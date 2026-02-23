@@ -1,0 +1,87 @@
+name: IR_SSH_ULTRA_2026
+on:
+  workflow_dispatch: # اجرای دستی
+
+jobs:
+  deploy_gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # اجرا تا 6 ساعت مجاز 
+    
+    steps:
+      - name: Advanced System Optimization
+        run: |
+          # تنظیم MTU برای عبور از فیلترینگ سختگیرانه ایرانسل 
+          sudo ifconfig eth0 mtu 1350 up
+          sudo apt-get update
+          sudo apt-get install -y openssh-server jq curl openssl
+          
+          # ساخت کاربر مشابه پنل شاهان با دسترسی Shell کامل
+          sudo useradd -m -s /bin/bash shahan_pro
+          echo "shahan_pro:admin123" | sudo chpasswd
+          sudo service ssh start
+
+      - name: Install Xray & Reality Config
+        id: xray_setup
+        run: |
+          # نصب هسته Xray نسخه 2026 برای پشتیبانی از Vision [5]
+          bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+          
+          # تولید کلیدهای Reality برای مخفی‌سازی ترافیک 
+          UUID=$(xray uuid)
+          KEYS=$(xray x25519)
+          PRIV=$(echo $KEYS | awk '{print $3}')
+          PUB=$(echo $KEYS | awk '{print $6}')
+          SID=$(openssl rand -hex 8)
+          
+          echo "uuid=$UUID" >> $GITHUB_OUTPUT
+          echo "pub=$PUB" >> $GITHUB_OUTPUT
+          echo "sid=$SID" >> $GITHUB_OUTPUT
+
+          # کانفیگ Xray با SNI معتبر مایکروسافت برای ایرانسل 
+          cat <<EOF > /usr/local/etc/xray/config.json
+          {
+            "inbounds":, "decryption": "none"},
+              "streamSettings": {
+                "network": "tcp", "security": "reality",
+                "realitySettings": {
+                  "show": false, "dest": "www.microsoft.com:443",
+                  "serverNames": ["www.microsoft.com", "microsoft.com"],
+                  "privateKey": "$PRIV", "shortIds":
+                }
+              }
+            }],
+            "outbounds": [{"protocol": "freedom"}]
+          }
+          EOF
+          sudo systemctl restart xray
+
+      - name: Multi-Region Tunneling (Ngrok)
+        id: tunnel
+        run: |
+          # نصب و اجرای Ngrok در ریجن‌های مختلف برای دور زدن انسداد ایرانسل [6]
+          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt update && sudo apt install ngrok
+          ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          
+          # استفاده از ریجن استرالیا یا اروپا که معمولاً روی ایرانسل بازتر هستند
+          ngrok tcp 22 --region=eu --log=stdout > ngrok_ssh.log &
+          ngrok tcp 8080 --region=eu --log=stdout > ngrok_vless.log &
+          sleep 15
+          
+          SSH_ADDR=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels | select(.name=="tunnel-1") |.public_url' | sed 's/tcp:\/\///')
+          VLESS_ADDR=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels | select(.name=="tunnel-2") |.public_url' | sed 's/tcp:\/\///')
+          
+          echo "ssh_host=$(echo $SSH_ADDR | cut -d':' -f1)" >> $GITHUB_OUTPUT
+          echo "ssh_port=$(echo $SSH_ADDR | cut -d':' -f2)" >> $GITHUB_OUTPUT
+          echo "vless_host=$(echo $VLESS_ADDR | cut -d':' -f1)" >> $GITHUB_OUTPUT
+          echo "vless_port=$(echo $VLESS_ADDR | cut -d':' -f2)" >> $GITHUB_OUTPUT
+
+      - name: Telegram Final Config
+        run: |
+          # ساخت لینک VLESS Vision نهایی برای ایرانسل 
+          VLESS_LINK="vless://${{ steps.xray_setup.outputs.uuid }}@${{ steps.tunnel.outputs.vless_host }}:${{ steps.tunnel.outputs.vless_port }}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.microsoft.com&fp=chrome&pbk=${{ steps.xray_setup.outputs.pub }}&sid=${{ steps.xray_setup.outputs.sid }}&type=tcp#IR_MTN_2026"
+          
+          MESSAGE="🚀 *GitHub Shahan-Pro Ready (v2.1)*%n%n👤 *SSH User:* \`shahan_pro\`%n🔑 *SSH Pass:* \`admin123\`%n📍 *Host:* \`${{ steps.tunnel.outputs.ssh_host }}\`%n🔢 *Port:* \`${{ steps.tunnel.outputs.ssh_port }}\`%n%n💎 *VLESS Vision (Mobile Optimized):*%n\`$VLESS_LINK\`%n%n⏱ *Valid for:* 6 Hours"
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}&text=$MESSAGE&parse_mode=Markdown"
