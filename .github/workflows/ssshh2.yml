@@ -1,63 +1,88 @@
-name: IR_SSH_Shahan_Style_2026_Serveo
-
+name: IR_VLESS_Reality_Shahan
 on:
   workflow_dispatch:
 
 jobs:
-  deploy_ssh:
+  deploy_vless:
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
-      - name: Setup SSH Environment
+      - name: Install Xray & Dependencies
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y openssh-server autossh
-
-          sudo useradd -m -s /bin/bash shahan_user
-          echo "shahan_user:pass1234" | sudo chpasswd
-
-          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-          sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
-
-          sudo service ssh start
-          echo "✅ SSH Server Started"
-
-      - name: Generate SSH Key
+          sudo apt-get update
+          sudo apt-get install -y jq curl uuid-runtime
+          bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+          
+      - name: Generate Reality Keys & Config
         run: |
-          ssh-keygen -t rsa -b 2048 -f ~/.ssh/id_rsa -N ""
-          # Disable host key checking for serveo
-          echo "Host serveo.net" >> ~/.ssh/config
-          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
-          echo "  ServerAliveInterval 60" >> ~/.ssh/config
+          # تولید کلیدها و UUID
+          UUID=$(uuidgen)
+          KEYS=$(xray x25519)
+          PRIVATE_KEY=$(echo "$KEYS" | awk '/Private key:/ {print $3}')
+          PUBLIC_KEY=$(echo "$KEYS" | awk '/Public key:/ {print $3}')
+          SHORT_ID=$(openssl rand -hex 8)
+          
+          # ذخیره برای مراحل بعد
+          echo "UUID=$UUID" >> $GITHUB_ENV
+          echo "PUB=$PUBLIC_KEY" >> $GITHUB_ENV
+          echo "SID=$SHORT_ID" >> $GITHUB_ENV
+          
+          # ساخت فایل کانفیگ Xray
+          cat <<EOF > /usr/local/etc/xray/config.json
+          {
+            "inbounds": [
+              {
+                "port": 443,
+                "protocol": "vless",
+                "settings": {
+                  "clients": [{ "id": "$UUID", "flow": "xtls-rprx-vision" }],
+                  "decryption": "none"
+                },
+                "streamSettings": {
+                  "network": "tcp",
+                  "security": "reality",
+                  "realitySettings": {
+                    "show": false,
+                    "dest": "www.google.com:443",
+                    "xver": 0,
+                    "serverNames": ["www.google.com"],
+                    "privateKey": "$PRIVATE_KEY",
+                    "shortIds": ["$SHORT_ID"]
+                  }
+                }
+              }
+            ],
+            "outbounds": [{ "protocol": "freedom" }]
+          }
+          EOF
+          
+          sudo systemctl restart xray
 
-      - name: Start Serveo Tunnel
+      - name: Install & Start Ngrok
         run: |
-          # shahan2026 = subdomain ثابت - هر بار همینه!
-          autossh -M 0 -f -N \
-            -o "StrictHostKeyChecking=no" \
-            -o "ServerAliveInterval=30" \
-            -o "ServerAliveCountMax=3" \
-            -R shahan2026:22:localhost:22 \
-            serveo.net
-
-          sleep 5
+          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt update && sudo apt install -y ngrok
+          
+          ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          
+          # فوروارد کردن پورت 443 (VLESS) روی TCP Ngrok
+          ngrok tcp 443 --log=stdout > ngrok.log &
+          sleep 10
+          
+          TUNNEL_ADDR=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' | sed 's/tcp:\/\///')
+          HOST=$(echo $TUNNEL_ADDR | cut -d':' -f1)
+          PORT=$(echo $TUNNEL_ADDR | cut -d':' -42) # استخراج پورت
+          PORT=$(echo $TUNNEL_ADDR | rev | cut -d':' -f1 | rev)
+          HOST=$(echo $TUNNEL_ADDR | cut -d':' -f1)
 
           echo "======================================"
-          echo "✅ SSH Ready (Shahan Style - Serveo)"
-          echo "--------------------------------------"
-          echo "🌐 Host: serveo.net"
-          echo "🔌 Port: 80"
-          echo "🖥️  Subdomain: shahan2026"
-          echo "--------------------------------------"
-          echo "User: shahan_user"
-          echo "Pass: pass1234"
+          echo "✅ VLESS + REALITY Config Ready"
+          echo "======================================"
+          echo "vless://${{ env.UUID }}@$HOST:$PORT?security=reality&sni=www.google.com&fp=chrome&pbk=${{ env.PUB }}&sid=${{ env.SID }}&type=tcp&flow=xtls-rprx-vision#Shahan_Reality"
+          echo "======================================"
           echo "Valid for: 6 Hours"
-          echo "======================================"
-          echo ""
-          echo "💻 دستور اتصال:"
-          echo "ssh -J serveo.net shahan_user@shahan2026"
 
       - name: Keep Runner Alive
-        run: |
-          sleep 21600
+        run: sleep 21600
