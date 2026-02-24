@@ -1,4 +1,4 @@
-name: IR_VLESS_Reality_Shahan_Fixed
+name: IR_VLESS_Reality_Shahan_Final
 on:
   workflow_dispatch:
 
@@ -8,85 +8,79 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Install Xray & Dependencies
+      - name: Install Xray
         run: |
           sudo apt-get update
           sudo apt-get install -y jq curl uuid-runtime
-          # اجرای اسکریپت نصب با sudo مستقیم
           curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh | sudo bash -s -- install
           
-      - name: Generate Reality Keys & Config
+      - name: Setup Reality & Start Xray
         run: |
-          # تولید کلیدها و UUID
+          # تولید کلیدها با دقت بالا
           UUID=$(uuidgen)
-          KEYS=$(xray x25519)
-          PRIVATE_KEY=$(echo "$KEYS" | awk '/Private key:/ {print $3}')
-          PUBLIC_KEY=$(echo "$KEYS" | awk '/Public key:/ {print $3}')
-          SHORT_ID=$(openssl rand -hex 8)
+          KEYS=$(/usr/local/bin/xray x25519)
+          PRIV=$(echo "$KEYS" | awk '/Private key:/ {print $3}')
+          PUB=$(echo "$KEYS" | awk '/Public key:/ {print $3}')
+          SID=$(openssl rand -hex 8)
           
-          echo "UUID=$UUID" >> $GITHUB_ENV
-          echo "PUB=$PUBLIC_KEY" >> $GITHUB_ENV
-          echo "SID=$SHORT_ID" >> $GITHUB_ENV
+          # ذخیره در فایل موقت برای اطمینان از دسترسی در مراحل بعد
+          echo "UUID=$UUID" > info.txt
+          echo "PUB=$PUB" >> info.txt
+          echo "SID=$SID" >> info.txt
           
-          # ساخت فایل کانفیگ و انتقال به مسیر سیستمی با sudo
           cat <<EOF > config.json
           {
-            "inbounds": [
-              {
-                "port": 443,
-                "protocol": "vless",
-                "settings": {
-                  "clients": [{ "id": "$UUID", "flow": "xtls-rprx-vision" }],
-                  "decryption": "none"
-                },
-                "streamSettings": {
-                  "network": "tcp",
-                  "security": "reality",
-                  "realitySettings": {
-                    "show": false,
-                    "dest": "www.google.com:443",
-                    "xver": 0,
-                    "serverNames": ["www.google.com"],
-                    "privateKey": "$PRIVATE_KEY",
-                    "shortIds": ["$SHORT_ID"]
-                  }
+            "inbounds": [{
+              "port": 443,
+              "protocol": "vless",
+              "settings": {
+                "clients": [{"id": "$UUID", "flow": "xtls-rprx-vision"}],
+                "decryption": "none"
+              },
+              "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                  "show": false,
+                  "dest": "www.google.com:443",
+                  "xver": 0,
+                  "serverNames": ["www.google.com"],
+                  "privateKey": "$PRIV",
+                  "shortIds": ["$SID"]
                 }
               }
-            ],
-            "outbounds": [{ "protocol": "freedom" }]
+            }],
+            "outbounds": [{"protocol": "freedom"}]
           }
           EOF
           
           sudo mv config.json /usr/local/etc/xray/config.json
           sudo systemctl restart xray
 
-      - name: Install & Start Ngrok
+      - name: Ngrok & Final Link
         run: |
           curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
           echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
           sudo apt update && sudo apt install -y ngrok
           
           ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
-          
           ngrok tcp 443 --log=stdout > ngrok.log &
           sleep 15
           
-          TUNNEL_ADDR=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' | sed 's/tcp:\/\///')
+          ADDR=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' | sed 's/tcp:\/\///')
+          HOST=$(echo $ADDR | cut -d':' -f1)
+          PORT=$(echo $ADDR | cut -d':' -f2)
           
-          if [ -z "$TUNNEL_ADDR" ] || [ "$TUNNEL_ADDR" == "null" ]; then
-            echo "❌ خطا در دریافت آدرس Ngrok! توکن خود را چک کنید."
-            exit 1
-          fi
-
-          HOST=$(echo $TUNNEL_ADDR | cut -d':' -f1)
-          PORT=$(echo $TUNNEL_ADDR | cut -d':' -f2)
+          # خواندن متغیرها از فایل موقت
+          UUID=$(grep UUID info.txt | cut -d'=' -f2)
+          PUB=$(grep PUB info.txt | cut -d'=' -f2)
+          SID=$(grep SID info.txt | cut -d'=' -f2)
 
           echo "======================================"
-          echo "✅ VLESS + REALITY Config (Fixed)"
+          echo "✅ SHAHAN REALITY IS LIVE"
           echo "======================================"
-          echo "vless://${{ env.UUID }}@$HOST:$PORT?security=reality&sni=www.google.com&fp=chrome&pbk=${{ env.PUB }}&sid=${{ env.SID }}&type=tcp&flow=xtls-rprx-vision#Shahan_Reality"
+          echo "vless://$UUID@$HOST:$PORT?security=reality&sni=www.google.com&fp=chrome&pbk=$PUB&sid=$SID&type=tcp&flow=xtls-rprx-vision#Shahan_Reality"
           echo "======================================"
-          echo "Valid for: 6 Hours"
-
-      - name: Keep Runner Alive
+          
+      - name: Keep Alive
         run: sleep 21600
