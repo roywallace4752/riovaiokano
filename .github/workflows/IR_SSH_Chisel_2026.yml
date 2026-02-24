@@ -1,0 +1,33 @@
+name: IR_SSH_Chisel_2026
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy_ssh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Setup SSH
+        run: |
+          sudo apt-get install -y openssh-server
+          sudo useradd -m -s /bin/bash shahan_user
+          echo "shahan_user:pass1234" | sudo chpasswd
+          sudo service ssh start
+
+      - name: Install & Run Chisel
+        run: |
+          curl -L https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_amd64.gz | gunzip > chisel
+          chmod +x chisel
+          
+          ./chisel server --port 8080 --reverse &
+          sleep 5
+          
+          echo "======================================"
+          echo "روی گوشیت chisel client نصب کن"
+          echo "بعد این دستور رو بزن:"
+          echo "chisel client http://RUNNER_IP:8080 R:2222:localhost:22"
+          echo "======================================"
+
+      - name: Keep Alive
+        run: sleep 21600
