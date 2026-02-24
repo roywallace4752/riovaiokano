@@ -25,7 +25,7 @@ jobs:
           # نصب کلید GPG
           curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
           
-          # دستور اصلاح شده مخزن (دقت کنید: بین data و./ حتما یک فاصله وجود دارد) 
+          # دستور اصلاح شده مخزن با فاصله گذاری استاندارد 
           echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
           
           sudo apt update
@@ -39,16 +39,16 @@ jobs:
           mkdir -p ~/.config/playit_gg
           echo "secret_key = \"$SECRET_KEY\"" > ~/.config/playit_gg/playit.toml
           
-          # اجرای عامل در حالت بدون گرافیک
+          # اجرای کلاینت در حالت بدون گرافیک 
           playit --no-gui > playit.log 2>&1 &
           
-          # انتظار برای برقراری اتصال Anycast
+          # انتظار برای اتصال به شبکه Anycast
           sleep 20
           
           echo "======================================"
-          echo "✅ SSH Server is live via Playit.gg"
+          echo "✅ SSH Server Status"
           
-          # بررسی صحت کلید و اتصال از روی لاگ‌ها 
+          # بررسی وضعیت اتصال در لاگ
           if grep -q "secret key valid" playit.log; then
             echo "Authentication: SUCCESS"
           else
@@ -58,18 +58,19 @@ jobs:
           fi
           echo "======================================"
 
-      - name: Connection Info
+      - name: Connection Information
         run: |
           echo "======================================"
           echo "User: shahan_user"
           echo "Pass: pass1234"
-          echo "آدرس و پورت ثابت خود را از پنل Playit.gg بخش Tunnels بردارید."
+          echo "نکته: آدرس و پورت ثابت خود را از پنل Playit.gg بخش Tunnels بردارید."
           echo "======================================"
 
-      - name: Keep Alive
+      - name: Keep Runner Alive
         run: |
-          echo "Runner is active for 6 hours."
+          echo "Runner is active (6 Hours Duration)."
+          # جلوگیری از اتمام زمان رانر [9]
           for i in {1..360}; do
-            echo "Keep-alive Heartbeat $i..."
+            echo "Heartbeat $i: Connection is Active..."
             sleep 60
           done
