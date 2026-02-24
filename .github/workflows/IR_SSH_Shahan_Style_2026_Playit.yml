@@ -11,67 +11,53 @@ jobs:
       - name: Setup SSH Environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y openssh-server sshpass jq curl
+          sudo apt-get install -y openssh-server curl
 
-          # ایجاد کاربر
           sudo useradd -m -s /bin/bash shahan_user
           echo "shahan_user:pass1234" | sudo chpasswd
 
-          # فعال‌سازی پسورد لاگین
           sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
           sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
 
-          # استارت SSH
           sudo service ssh start
+          sudo service ssh status
 
-      - name: Install Playit.gg (Direct Binary - Stable)
+      - name: Install Playit (Stable Binary)
         run: |
-          # دانلود آخرین نسخه لینوکس
           curl -L -o playit https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
-          
           chmod +x playit
           sudo mv playit /usr/local/bin/playit
 
-          playit --version
+          # تست سالم بودن باینری
+          playit --help | head -n 5
 
-      - name: Configure & Start Playit Tunnel
+      - name: Start Playit Tunnel
         env:
           SECRET_KEY: ${{ secrets.PLAYIT_SECRET_KEY }}
         run: |
           mkdir -p ~/.config/playit_gg
           echo "secret_key = \"$SECRET_KEY\"" > ~/.config/playit_gg/playit.toml
 
-          # اجرای کلاینت
           nohup playit --no-gui > playit.log 2>&1 &
 
-          # صبر برای اتصال
-          sleep 20
+          sleep 25
 
-          echo "======================================"
-          echo "Playit Status Check"
+          echo "========== PLAYIT LOG =========="
+          tail -n 30 playit.log
+          echo "================================"
 
-          if grep -qi "connected" playit.log; then
-            echo "Tunnel Connection: SUCCESS"
-          else
-            echo "Tunnel may still be initializing..."
-            tail -n 20 playit.log
-          fi
-
-          echo "======================================"
-
-      - name: Connection Information
+      - name: Connection Info
         run: |
           echo "======================================"
-          echo "SSH Username: shahan_user"
-          echo "SSH Password: pass1234"
+          echo "SSH USER: shahan_user"
+          echo "SSH PASS: pass1234"
           echo ""
-          echo "⚠️ آدرس و پورت تونل را از پنل Playit.gg → Tunnels بردارید."
+          echo "⚠️ آدرس و پورت را از پنل Playit → Tunnels بردار."
           echo "======================================"
 
-      - name: Keep Runner Alive (6 Hours)
+      - name: Keep Runner Alive
         run: |
-          echo "Runner is active for 6 hours."
           for i in {1..360}; do
-            echo "Heartbeat $i - SSH Tunnel Active"
+            echo "Heartbeat $i - Active"
             sleep 60
           done
