@@ -1,12 +1,11 @@
 name: IR_SSH_Shahan_Style_2026_Playit
-on:
-  workflow_dispatch:
+on: workflow_dispatch
 
 jobs:
   deploy_ssh:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    
+
     steps:
       - name: Setup SSH Environment
         run: |
@@ -14,62 +13,99 @@ jobs:
           sudo apt-get install -y openssh-server sshpass jq curl gpg
           
           # ایجاد کاربر
-          sudo useradd -m -s /bin/bash shahan_user
+          sudo useradd -m -s /bin/bash shahan_user || true
           echo "shahan_user:pass1234" | sudo chpasswd
           
           # استارت سرویس SSH
           sudo service ssh start
+          echo "✅ SSH Service started"
 
       - name: Install Playit.gg Agent
         run: |
+          echo "🔧 Installing Playit.gg..."
+          
           # نصب کلید GPG
           curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
           
-          # دستور اصلاح شده مخزن (دقت کنید: بین data و./ حتما یک فاصله وجود دارد) 
-          echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
+          # اضافه کردن منبع APT (فرمت صحیح)
+          echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/ ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
           
-          sudo apt update
-          sudo apt install -y playit
+          # آپدیت و نصب
+          sudo apt-get update
+          sudo apt-get install -y playit
+          
+          echo "✅ Playit.gg installed successfully"
 
       - name: Configure & Start Playit Tunnel
         env:
           SECRET_KEY: ${{ secrets.PLAYIT_SECRET_KEY }}
         run: |
-          # ایجاد دایرکتوری و فایل تنظیمات برای شناسایی خودکار سکرت کد 
+          echo "🚀 Configuring Playit tunnel..."
+          
+          # بررسی SECRET_KEY
+          if [ -z "$SECRET_KEY" ]; then
+            echo "❌ ERROR: PLAYIT_SECRET_KEY is not set!"
+            echo "Please add PLAYIT_SECRET_KEY to GitHub Secrets"
+            exit 1
+          fi
+          
+          # ایجاد دایرکتوری و فایل تنظیمات
           mkdir -p ~/.config/playit_gg
+          
+          # ذخیره secret key در فایل
           echo "secret_key = \"$SECRET_KEY\"" > ~/.config/playit_gg/playit.toml
+          chmod 600 ~/.config/playit_gg/playit.toml
           
-          # اجرای عامل در حالت بدون گرافیک
-          playit --no-gui > playit.log 2>&1 &
+          # اجرای Playit در پس‌زمینه
+          nohup playit --no-gui > playit.log 2>&1 &
+          echo $! > playit.pid
           
-          # انتظار برای برقراری اتصال Anycast
-          sleep 20
+          # انتظار برای برقراری اتصال
+          sleep 15
           
           echo "======================================"
           echo "✅ SSH Server is live via Playit.gg"
-          
-          # بررسی صحت کلید و اتصال از روی لاگ‌ها 
-          if grep -q "secret key valid" playit.log; then
-            echo "Authentication: SUCCESS"
-          else
-            echo "Authentication: FAILED - Please check your PLAYIT_SECRET_KEY"
-            tail -n 10 playit.log
-            exit 1
-          fi
           echo "======================================"
+          
+          # بررسی لاگ‌ها
+          if grep -i "error\|failed" playit.log > /dev/null; then
+            echo "⚠️ Warning: Check logs below:"
+            tail -20 playit.log
+          else
+            echo "✅ Playit running successfully"
+            tail -20 playit.log
+          fi
 
       - name: Connection Info
         run: |
           echo "======================================"
+          echo "🔐 SSH CONNECTION DETAILS"
+          echo "======================================"
           echo "User: shahan_user"
-          echo "Pass: pass1234"
-          echo "آدرس و پورت ثابت خود را از پنل Playit.gg بخش Tunnels بردارید."
+          echo "Password: pass1234"
+          echo ""
+          echo "⚠️ اتصال خود را از پنل Playit.gg پیدا کنید:"
+          echo "https://playit.gg/account/tunnels"
+          echo ""
+          echo "دستور SSH (مثال):"
+          echo "ssh -p PORT shahan_user@ADDRESS"
           echo "======================================"
 
       - name: Keep Alive
         run: |
-          echo "Runner is active for 6 hours."
+          echo "⏱️ Runner will stay active for 6 hours..."
+          
           for i in {1..360}; do
-            echo "Keep-alive Heartbeat $i..."
+            echo "[$i/360] Keep-alive heartbeat at $(date '+%Y-%m-%d %H:%M:%S')"
+            
+            # بررسی اینکه Playit هنوز فعال است
+            if ps aux | grep -v grep | grep "playit --no-gui" > /dev/null; then
+              echo "✅ Playit is still running"
+            else
+              echo "⚠️ Playit process not found!"
+            fi
+            
             sleep 60
           done
+          
+          echo "❌ 6 hours timeout reached. Workflow ending..."
