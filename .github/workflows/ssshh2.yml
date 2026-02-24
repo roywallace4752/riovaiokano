@@ -9,29 +9,20 @@ jobs:
     steps:
       - name: Install & Run Everything
         run: |
-          # 1. نصب پیش‌نیازها و Xray
+          # 1. نصب پیش‌نیازها
           sudo apt-get update
           sudo apt-get install -y jq curl uuid-runtime
           curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh | sudo bash -s -- install
           
           # 2. تولید متغیرها
           UUID=$(uuidgen)
-          echo "🔑 Generating X25519 keys..."
           KEYS=$(/usr/local/bin/xray x25519)
-          
-          # استخراج دقیق کلیدها (حذف فضاهای خالی احتمالی)
           PRIV=$(echo "$KEYS" | grep -i "Private key" | awk -F': ' '{print $2}' | tr -d ' ')
           PUB=$(echo "$KEYS" | grep -i "Public key" | awk -F': ' '{print $2}' | tr -d ' ')
           SID=$(openssl rand -hex 8)
           
-          # بررسی صحت متغیرها
-          if [ -z "$PRIV" ] || [ -z "$PUB" ]; then
-            echo "❌ Error: Could not generate keys!"
-            exit 1
-          fi
-
-          # 3. ساخت فایل کانفیگ (نوشتن در فایل موقت و سپس انتقال با sudo)
-          cat <<EOF > config.json
+          # 3. ساخت فایل کانفیگ (با روش ایمن برای YAML)
+          sudo tee /usr/local/etc/xray/config.json > /dev/null <<EOF
           {
             "inbounds": [{
               "port": 443,
@@ -55,10 +46,8 @@ jobs:
             }],
             "outbounds": [{"protocol": "freedom"}]
           }
-EOF
+          EOF
 
-          sudo mv config.json /usr/local/etc/xray/config.json
-          
           # 4. ری‌استارت سرویس
           sudo systemctl restart xray
           
@@ -70,27 +59,14 @@ EOF
           ngrok tcp 443 --log=stdout > ngrok.log &
           sleep 20
           
-          # 6. استخراج آدرس Ngrok
+          # 6. استخراج آدرس و چاپ لینک
           ADDR=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' | sed 's/tcp:\/\///')
-          
-          if [ -z "$ADDR" ] || [ "$ADDR" == "null" ]; then
-            echo "❌ Error: Ngrok tunnel failed!"
-            exit 1
-          fi
-
           HOST=$(echo "$ADDR" | cut -d':' -f1)
           PORT=$(echo "$ADDR" | cut -d':' -f2)
           
-          # 7. نمایش خروجی نهایی
           echo "======================================"
-          echo "✅ SHAHAN REALITY CONFIG READY"
+          echo "✅ SHAHAN REALITY READY"
           echo "======================================"
-          echo "UUID: $UUID"
-          echo "Public Key: $PUB"
-          echo "Short ID: $SID"
-          echo "Address: $HOST:$PORT"
-          echo "======================================"
-          echo "📱 VLESS Link:"
           echo "vless://$UUID@$HOST:$PORT?security=reality&sni=www.google.com&fp=chrome&pbk=$PUB&sid=$SID&type=tcp&flow=xtls-rprx-vision#Shahan_Reality"
           echo "======================================"
           
