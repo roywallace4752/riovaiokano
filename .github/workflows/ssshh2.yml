@@ -1,4 +1,4 @@
-name: IR_VLESS_Reality_Shahan_Fixed
+name: IR_VLESS_Reality_Shahan_Final_Fixed
 on:
   workflow_dispatch:
 
@@ -14,14 +14,16 @@ jobs:
           sudo apt-get install -y jq curl uuid-runtime
           curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh | sudo bash -s -- install
           
-          # 2. تولید متغیرها
+          # 2. تولید کلیدها به روش مستقیم و ذخیره در فایل
           UUID=$(uuidgen)
-          KEYS=$(/usr/local/bin/xray x25519)
-          PRIV=$(echo "$KEYS" | grep -i "Private key" | awk -F': ' '{print $2}' | tr -d ' ')
-          PUB=$(echo "$KEYS" | grep -i "Public key" | awk -F': ' '{print $2}' | tr -d ' ')
+          /usr/local/bin/xray x25519 > keys.txt
+          
+          # استخراج کلیدها با حذف کدهای رنگی و فضاهای اضافی
+          PRIV=$(grep "Private key:" keys.txt | cut -d: -f2 | tr -d '[:space:]')
+          PUB=$(grep "Public key:" keys.txt | cut -d: -f2 | tr -d '[:space:]')
           SID=$(openssl rand -hex 8)
           
-          # 3. ساخت فایل کانفیگ (با روش ایمن برای YAML)
+          # 3. ساخت فایل کانفیگ
           sudo tee /usr/local/etc/xray/config.json > /dev/null <<EOF
           {
             "inbounds": [{
@@ -51,7 +53,7 @@ jobs:
           # 4. ری‌استارت سرویس
           sudo systemctl restart xray
           
-          # 5. نصب و اجرای Ngrok
+          # 5. تنظیم Ngrok
           curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
           echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
           sudo apt update && sudo apt install -y ngrok
@@ -65,10 +67,7 @@ jobs:
           PORT=$(echo "$ADDR" | cut -d':' -f2)
           
           echo "======================================"
-          echo "✅ SHAHAN REALITY READY"
+          echo "✅ SHAHAN REALITY IS READY"
           echo "======================================"
           echo "vless://$UUID@$HOST:$PORT?security=reality&sni=www.google.com&fp=chrome&pbk=$PUB&sid=$SID&type=tcp&flow=xtls-rprx-vision#Shahan_Reality"
           echo "======================================"
-          
-      - name: Keep Alive
-        run: sleep 21600
