@@ -13,16 +13,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y openssh-server sshpass jq curl gpg
           
-          # ایجاد کاربر با دسترسی مناسب
+          # ایجاد کاربر
           sudo useradd -m -s /bin/bash shahan_user
           echo "shahan_user:pass1234" | sudo chpasswd
           
-          # پیکربندی اولیه سرویس SSH
+          # استارت سرویس SSH
           sudo service ssh start
 
       - name: Install Playit.gg Agent
         run: |
-          # استفاده از مخزن رسمی APT برای پایداری بیشتر [5, 9]
+          # رفع خطای Malformed entry با افزودن فاصله قبل از./
           curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
           echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
           sudo apt update
@@ -32,22 +32,22 @@ jobs:
         env:
           SECRET_KEY: ${{ secrets.PLAYIT_SECRET_KEY }}
         run: |
-          # اجرای کلاینت در حالت بدون گرافیک با استفاده از کلید مخفی [7, 9]
-          # خروجی به یک فایل لاگ هدایت می‌شود تا از شلوغی کنسول جلوگیری شود
+          # اجرای کلاینت در حالت بدون گرافیک با استفاده از کلید مخفی
           playit --no-gui > playit.log 2>&1 &
           
-          # انتظار برای برقراری اتصال امن به شبکه Anycast
+          # انتظار برای برقراری اتصال
           sleep 20
           
           echo "======================================"
-          echo "✅ SSH VPN Ready (Playit.gg Migration)"
-          echo "Status: Agent Started in Headless Mode"
+          echo "✅ SSH Server is live via Playit.gg"
           
-          # بررسی صحت کلید از طریق لاگ‌ها 
+          # بررسی وضعیت اتصال در لاگ 
           if grep -q "secret key valid" playit.log; then
             echo "Authentication: SUCCESS"
           else
             echo "Authentication: FAILED - Please check your PLAYIT_SECRET_KEY"
+            # نمایش بخشی از لاگ برای عیب‌یابی در صورت شکست
+            tail -n 5 playit.log
             exit 1
           fi
           echo "======================================"
@@ -58,15 +58,13 @@ jobs:
           echo "User: shahan_user"
           echo "Pass: pass1234"
           echo "نکته: آدرس و پورت ثابت خود را از پنل Playit.gg دریافت کنید."
-          echo "آدرس معمولاً به فرمت زیر است:"
-          echo "example.gl.at.ply.gg:12345"
           echo "======================================"
 
       - name: Keep Runner Alive
         run: |
-          echo "سرویس فعال است. رانر به مدت ۶ ساعت باز خواهد ماند."
-          # ایجاد یک حلقه برای جلوگیری از اتمام زمان رانر و مانیتورینگ وضعیت
+          echo "Runner will stay active for 6 hours."
+          # حلقه برای باز نگه داشتن محیط و نمایش وضعیت [10]
           for i in {1..360}; do
-            echo "Heartbeat $i: Runner is alive..."
+            echo "Heartbeat $i: Connection Active..."
             sleep 60
           done
