@@ -1,4 +1,4 @@
-name: IR_SSH_Shahan_Style_2026_Playit
+name: IR_SSH_Shahan_Style_2026_Free_UDP
 on:
   workflow_dispatch:
 
@@ -8,28 +8,28 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Setup SSH Environment
+      - name: Setup SSH & Gost Bridge
         run: |
           sudo apt-get update
           sudo apt-get install -y openssh-server curl
-
+          
+          # تنظیمات کاربر
           sudo useradd -m -s /bin/bash shahan_user
           echo "shahan_user:pass1234" | sudo chpasswd
-
-          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-          sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
-
           sudo service ssh start
-          sudo service ssh status
 
-      - name: Install Playit (Stable Binary)
+          # نصب Gost (برای تبدیل TCP به UDP)
+          curl -L https://github.com/go-gost/gost/releases/download/v3.0.0-rc.10/gost_3.0.0-rc.10_linux_amd64.tar.gz | tar -xz
+          sudo mv gost /usr/local/bin/gost
+          
+          # اجرای Gost در پس‌زمینه: تبدیل پورت 22 TCP به پورت 5555 UDP
+          nohup gost -L=udp://:5555/127.0.0.1:22 > gost.log 2>&1 &
+
+      - name: Install Playit
         run: |
           curl -L -o playit https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
           chmod +x playit
           sudo mv playit /usr/local/bin/playit
-
-          # تست سالم بودن باینری
-          playit --help | head -n 5
 
       - name: Start Playit Tunnel
         env:
@@ -37,27 +37,24 @@ jobs:
         run: |
           mkdir -p ~/.config/playit_gg
           echo "secret_key = \"$SECRET_KEY\"" > ~/.config/playit_gg/playit.toml
-
+          
+          # اجرای Playit در حالت Headless
           nohup playit --no-gui > playit.log 2>&1 &
-
           sleep 25
+          tail -n 20 playit.log
 
-          echo "========== PLAYIT LOG =========="
-          tail -n 30 playit.log
-          echo "================================"
-
-      - name: Connection Info
+      - name: Connection Information
         run: |
           echo "======================================"
-          echo "SSH USER: shahan_user"
-          echo "SSH PASS: pass1234"
-          echo ""
-          echo "⚠️ آدرس و پورت را از پنل Playit → Tunnels بردار."
+          echo "✅ SSH over UDP is Ready (FREE MODE)"
+          echo "1. در سایت Playit یک تونل از نوع 'UDP' بسازید."
+          echo "2. پورت محلی (Local Port) را روی 5555 تنظیم کنید."
+          echo "3. آدرس ثابت خود را بردارید (مثلاً: host.at.ply.gg:12345)"
           echo "======================================"
 
       - name: Keep Runner Alive
         run: |
           for i in {1..360}; do
-            echo "Heartbeat $i - Active"
+            echo "Heartbeat $i - Session Active"
             sleep 60
           done
