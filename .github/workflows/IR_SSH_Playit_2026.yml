@@ -1,0 +1,38 @@
+name: IR_SSH_Playit_2026
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy_ssh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Setup SSH User
+        run: |
+          sudo apt-get install -y openssh-server
+          sudo useradd -m -s /bin/bash shahan_user
+          echo "shahan_user:pass1234" | sudo chpasswd
+          sudo service ssh start
+
+      - name: Install Playit (Official Method)
+        run: |
+          curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
+          echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
+          sudo apt update
+          sudo apt install -y playit
+
+      - name: Run Playit
+        run: |
+          playit --secret "${{ secrets.PLAYIT_SECRET }}" &
+          sleep 20
+          echo "======================================"
+          echo "✅ Playit is Running"
+          echo "برو به playit.gg داشبورد"
+          echo "Agent رو ببین و Tunnel اضافه کن"
+          echo "User: shahan_user"
+          echo "Pass: pass1234"
+          echo "======================================"
+
+      - name: Keep Alive
+        run: sleep 21600
