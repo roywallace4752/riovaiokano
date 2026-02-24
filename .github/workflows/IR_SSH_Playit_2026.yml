@@ -15,24 +15,20 @@ jobs:
           echo "shahan_user:pass1234" | sudo chpasswd
           sudo service ssh start
 
-      - name: Install Playit (Official Method)
+      - name: Install Playit
         run: |
           curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
           echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
-          sudo apt update
-          sudo apt install -y playit
+          sudo apt update && sudo apt install -y playit
 
-      - name: Run Playit
+      - name: Run Playit & Show Claim URL
         run: |
-          playit --secret "${{ secrets.PLAYIT_SECRET }}" &
-          sleep 20
+          playit 2>&1 | tee playit.log &
+          sleep 15
           echo "======================================"
-          echo "✅ Playit is Running"
-          echo "برو به playit.gg داشبورد"
-          echo "Agent رو ببین و Tunnel اضافه کن"
-          echo "User: shahan_user"
-          echo "Pass: pass1234"
+          cat playit.log
           echo "======================================"
+          echo "لینک claim بالا رو کپی کن و توی مرورگر باز کن"
 
       - name: Keep Alive
         run: sleep 21600
