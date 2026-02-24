@@ -1,0 +1,72 @@
+name: IR_SSH_Shahan_Style_2026_Playit
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy_ssh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    
+    steps:
+      - name: Setup SSH Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssh-server sshpass jq curl gpg
+          
+          # ایجاد کاربر با دسترسی مناسب
+          sudo useradd -m -s /bin/bash shahan_user
+          echo "shahan_user:pass1234" | sudo chpasswd
+          
+          # پیکربندی اولیه سرویس SSH
+          sudo service ssh start
+
+      - name: Install Playit.gg Agent
+        run: |
+          # استفاده از مخزن رسمی APT برای پایداری بیشتر [5, 9]
+          curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
+          echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
+          sudo apt update
+          sudo apt install -y playit
+
+      - name: Start Playit Tunnel
+        env:
+          SECRET_KEY: ${{ secrets.PLAYIT_SECRET_KEY }}
+        run: |
+          # اجرای کلاینت در حالت بدون گرافیک با استفاده از کلید مخفی [7, 9]
+          # خروجی به یک فایل لاگ هدایت می‌شود تا از شلوغی کنسول جلوگیری شود
+          playit --no-gui > playit.log 2>&1 &
+          
+          # انتظار برای برقراری اتصال امن به شبکه Anycast
+          sleep 20
+          
+          echo "======================================"
+          echo "✅ SSH VPN Ready (Playit.gg Migration)"
+          echo "Status: Agent Started in Headless Mode"
+          
+          # بررسی صحت کلید از طریق لاگ‌ها 
+          if grep -q "secret key valid" playit.log; then
+            echo "Authentication: SUCCESS"
+          else
+            echo "Authentication: FAILED - Please check your PLAYIT_SECRET_KEY"
+            exit 1
+          fi
+          echo "======================================"
+
+      - name: Connection Information
+        run: |
+          echo "======================================"
+          echo "User: shahan_user"
+          echo "Pass: pass1234"
+          echo "نکته: آدرس و پورت ثابت خود را از پنل Playit.gg دریافت کنید."
+          echo "آدرس معمولاً به فرمت زیر است:"
+          echo "example.gl.at.ply.gg:12345"
+          echo "======================================"
+
+      - name: Keep Runner Alive
+        run: |
+          echo "سرویس فعال است. رانر به مدت ۶ ساعت باز خواهد ماند."
+          # ایجاد یک حلقه برای جلوگیری از اتمام زمان رانر و مانیتورینگ وضعیت
+          for i in {1..360}; do
+            echo "Heartbeat $i: Runner is alive..."
+            sleep 60
+          done
