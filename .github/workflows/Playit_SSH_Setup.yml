@@ -1,17 +1,36 @@
-name: Playit_SSH_Setup
+name: Playit_SSH_Setup_Final
 on:
   workflow_dispatch:
 jobs:
   ssh_job:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Playit
+      - name: Setup SSH
+        run: |
+          sudo apt-get update && sudo apt-get install -y openssh-server
+          sudo useradd -m -s /bin/bash shahan_user
+          echo "shahan_user:pass1234" | sudo chpasswd
+          sudo service ssh start
+
+      - name: Install & Get Playit Link
         run: |
           curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
           echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
           sudo apt update && sudo apt install playit -y
+          
+          echo "------------------------------------------------"
+          echo "⏳ در حال استخراج لینک فعال‌سازی... لطفا صبر کنید"
+          echo "------------------------------------------------"
+          
+          # اجرای پلی‌آیت و کپچر کردن لینک از خروجی
+          playit setup --no-auth & 
+          sleep 15
+          
+          echo "------------------------------------------------"
+          echo "✅ لینک شما آماده شد! روی آن کلیک کنید:"
+          # پیدا کردن لینک در فایل لاگ سیستم یا خروجی مستقیم
+          pgrep playit | xargs -I {} cat /proc/{}/fd/1 | grep "https://playit.gg/claim/" || echo "اگر لینک ظاهر نشد، دوباره Workflow را اجرا کنید."
+          echo "------------------------------------------------"
 
-      - name: Get Activation Link
-        run: |
-          # این دستور یک ایجنت موقت می‌سازد و لینک فعال‌سازی را به تو می‌دهد
-          timeout 20s playit setup --user-code || true
+      - name: Keep Alive
+        run: sleep 21600
