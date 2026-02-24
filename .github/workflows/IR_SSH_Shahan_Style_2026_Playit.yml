@@ -1,4 +1,4 @@
-name: IR_SSH_Shahan_Style_2026_Free_UDP
+name: IR_SSH_Shahan_Style_2026_zrok
 on:
   workflow_dispatch:
 
@@ -6,75 +6,70 @@ jobs:
   deploy_ssh:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-
+    
     steps:
-      - name: Setup SSH
+      - name: Setup SSH Environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y openssh-server curl jq
-
+          sudo apt-get install -y openssh-server curl
+          
+          # تنظیم کاربر
           sudo useradd -m -s /bin/bash shahan_user
           echo "shahan_user:pass1234" | sudo chpasswd
-
+          
+          # فعال‌سازی ورود با پسورد
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
           sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
           sudo service ssh start
-          sudo service ssh status
 
-      - name: Install Latest Gost v3 (Dynamic)
-        run: |
-          # گرفتن لینک آخرین نسخه لینوکس amd64
-          GOST_URL=$(curl -s https://api.github.com/repos/go-gost/gost/releases/latest \
-            | jq -r '.assets[] | select(.name | test("linux_amd64.tar.gz$")) | .browser_download_url')
-
-          echo "Downloading: $GOST_URL"
-
-          curl -L "$GOST_URL" -o gost.tar.gz
-          tar -xzf gost.tar.gz
-
-          chmod +x gost
-          sudo mv gost /usr/local/bin/gost
-
-          gost -V
-
-      - name: Start Gost UDP Bridge
-        run: |
-          nohup gost -L udp://:5555/127.0.0.1:22 > gost.log 2>&1 &
-          sleep 3
-          tail -n 10 gost.log || true
-
-      - name: Install Playit
-        run: |
-          curl -L -o playit https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
-          chmod +x playit
-          sudo mv playit /usr/local/bin/playit
-
-      - name: Start Playit Tunnel
+      - name: Install & Enable zrok
         env:
-          SECRET_KEY: ${{ secrets.PLAYIT_SECRET_KEY }}
+          ZROK_TOKEN: ${{ secrets.ZROK_ENABLE_TOKEN }}
         run: |
-          mkdir -p ~/.config/playit_gg
-          echo "secret_key = \"$SECRET_KEY\"" > ~/.config/playit_gg/playit.toml
+          # دانلود آخرین نسخه باینری zrok [4]
+          curl -sSL https://get.openziti.io/install.sh | sudo bash -s zrok
+          
+          # فعال‌سازی محیط در حالت بدون گرافیک
+          zrok enable "$ZROK_TOKEN"
 
-          nohup playit --no-gui > playit.log 2>&1 &
-          sleep 25
+      - name: Start Private TCP Tunnel
+        run: |
+          # به اشتراک‌گذاری پورت 22 در مود tcpTunnel و حالت Headless
+          # خروجی در فایل لاگ ذخیره می‌شود تا توکن دسترسی را استخراج کنیم
+          nohup zrok share private localhost:22 --backend-mode tcpTunnel --headless > zrok.log 2>&1 &
+          
+          # انتظار برای ایجاد تونل
+          sleep 15
+          
+          echo "======================================"
+          echo "✅ zrok Tunnel is active"
+          
+          # استخراج Share Token از لاگ‌ها [3]
+          ACCESS_TOKEN=$(grep -oP "access your share with: zrok access private \K\w+" zrok.log)
+          
+          if; then
+            echo "❌ Failed to get Access Token. Check zrok.log:"
+            cat zrok.log
+            exit 1
+          fi
+          
+          echo "YOUR ACCESS TOKEN: $ACCESS_TOKEN"
+          echo "======================================"
 
-          echo "===== PLAYIT LOG ====="
-          tail -n 30 playit.log
-          echo "======================"
-
-      - name: Connection Info
+      - name: Connection Guide
         run: |
           echo "======================================"
-          echo "✅ SSH over UDP is Ready"
-          echo "Local UDP Port: 5555"
-          echo "SSH User: shahan_user"
-          echo "SSH Pass: pass1234"
-          echo "تونل UDP را در پنل Playit روی پورت 5555 تنظیم کن."
+          echo "نحوه اتصال از سیستم شخصی شما:"
+          echo "1. ابتدا کلاینت zrok را روی سیستم خود نصب کنید."
+          echo "2. این دستور را در ترمینال سیستم خود بزنید:"
+          echo "   zrok access private <YOUR_ACCESS_TOKEN> --bind 127.0.0.1:2222"
+          echo "3. حالا با استفاده از Putty یا ترمینال به SSH وصل شوید:"
+          echo "   ssh shahan_user@127.0.0.1 -p 2222"
           echo "======================================"
 
       - name: Keep Runner Alive
         run: |
           for i in {1..360}; do
-            echo "Heartbeat $i - Active"
+            echo "Heartbeat $i - Tunnel is stable"
             sleep 60
           done
