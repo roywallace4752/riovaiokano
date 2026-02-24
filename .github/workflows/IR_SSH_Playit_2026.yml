@@ -24,11 +24,20 @@ jobs:
       - name: Run Playit & Show Claim URL
         run: |
           playit 2>&1 | tee playit.log &
-          sleep 15
-          echo "======================================"
+          
+          # صبر کن تا URL بیاد
+          for i in $(seq 1 30); do
+            sleep 5
+            if grep -q "playit.gg/claim" playit.log; then
+              echo "======================================"
+              grep "playit.gg/claim" playit.log
+              echo "======================================"
+              break
+            fi
+            echo "منتظر URL... ($((i*5))s)"
+          done
+          
           cat playit.log
-          echo "======================================"
-          echo "لینک claim بالا رو کپی کن و توی مرورگر باز کن"
 
       - name: Keep Alive
         run: sleep 21600
