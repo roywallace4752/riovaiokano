@@ -1,27 +1,25 @@
-name: Get_Playit_Link_V4
+name: Get_Playit_Secret_2026
 on:
   workflow_dispatch:
 jobs:
-  get_link:
+  get_secret:
     runs-on: ubuntu-latest
     steps:
-      - name: Install & Catch Link
+      - name: Install & Force Secret Generation
         run: |
           curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
           echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
           sudo apt update && sudo apt install playit -y
           
           echo "------------------------------------------------"
-          echo "⏳ در حال استخراج لینک... لطفا ۲۰ ثانیه صبر کنید"
+          echo "🔑 در حال تولید Secret Key اختصاصی شما..."
           
-          # اجرای برنامه در پس‌زمینه و ذخیره خروجی در فایل
-          playit > playit.log 2>&1 &
-          sleep 20
+          # این دستور فایل تنظیمات را بدون نیاز به تایید می‌سازد
+          playit setup --generate-only --force
           
-          echo "✅ لینک فعال‌سازی شما:"
+          echo "✅ Secret Key شما آماده است:"
           echo "------------------------------------------------"
-          grep -o 'https://playit.gg/claim/[^" ]*' playit.log || echo "لینکی پیدا نشد، دوباره امتحان کنید"
+          # نمایش محتویات فایل تنظیمات برای کپی کردن سکرت
+          cat /etc/playit/playit.toml | grep "secret" || cat ~/.config/playit/playit.toml | grep "secret"
           echo "------------------------------------------------"
-          
-          # بستن برنامه
-          pkill playit || true
+          echo "این کد را کپی کرده و در GitHub Secrets با نام PLAYIT_SECRET ذخیره کنید."
