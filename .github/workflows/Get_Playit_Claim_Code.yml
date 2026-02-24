@@ -1,18 +1,27 @@
-name: Get_Playit_Claim_Code
+name: Get_Playit_Link_V4
 on:
   workflow_dispatch:
 jobs:
-  get_code:
+  get_link:
     runs-on: ubuntu-latest
     steps:
-      - name: Install & Get Code
+      - name: Install & Catch Link
         run: |
           curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
           echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
           sudo apt update && sudo apt install playit -y
           
           echo "------------------------------------------------"
-          echo "👇 کد شما تا چند ثانیه دیگر در خط پایین ظاهر می‌شود:"
-          # اجرای پلی‌آیت برای گرفتن کد (فقط ۱۰ ثانیه)
-          timeout 15s playit setup --user-code || true
+          echo "⏳ در حال استخراج لینک... لطفا ۲۰ ثانیه صبر کنید"
+          
+          # اجرای برنامه در پس‌زمینه و ذخیره خروجی در فایل
+          playit > playit.log 2>&1 &
+          sleep 20
+          
+          echo "✅ لینک فعال‌سازی شما:"
           echo "------------------------------------------------"
+          grep -o 'https://playit.gg/claim/[^" ]*' playit.log || echo "لینکی پیدا نشد، دوباره امتحان کنید"
+          echo "------------------------------------------------"
+          
+          # بستن برنامه
+          pkill playit || true
