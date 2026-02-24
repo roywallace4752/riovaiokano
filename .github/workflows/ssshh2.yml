@@ -1,110 +1,34 @@
-name: IR_VLESS_Reality_Debug
+name: IR_VLESS_WS_Shahan
 on:
   workflow_dispatch:
+
 jobs:
   deploy_vless:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - name: Install & Run Everything
+      - name: Install Xray
         run: |
-          # 1. نصب پیش‌نیازها
           sudo apt-get update
           sudo apt-get install -y jq curl uuid-runtime
           curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh | sudo bash -s -- install
           
-          # 2. تولید UUID
           UUID=$(uuidgen)
-          echo "UUID: $UUID"
           
-          # 3. تولید کلیدها با DEBUG کامل
-          echo "================================"
-          echo "🔍 RAW OUTPUT OF xray x25519:"
-          echo "================================"
-          /usr/local/bin/xray x25519
-          echo "================================"
-          
-          KEYS=$(/usr/local/bin/xray x25519)
-          echo ""
-          echo "📋 KEYS variable contains:"
-          echo "$KEYS"
-          echo ""
-          
-          # روش‌های مختلف استخراج
-          echo "🔧 Trying different extraction methods:"
-          
-          # Method 1
-          PRIV1=$(echo "$KEYS" | grep -i "Private" | awk -F': ' '{print $2}' | tr -d ' ')
-          PUB1=$(echo "$KEYS" | grep -i "Public" | awk -F': ' '{print $2}' | tr -d ' ')
-          echo "Method 1 - PRIV: [$PRIV1]"
-          echo "Method 1 - PUB: [$PUB1]"
-          
-          # Method 2
-          PRIV2=$(echo "$KEYS" | grep "Private" | cut -d':' -f2 | tr -d ' ')
-          PUB2=$(echo "$KEYS" | grep "Public" | cut -d':' -f2 | tr -d ' ')
-          echo "Method 2 - PRIV: [$PRIV2]"
-          echo "Method 2 - PUB: [$PUB2]"
-          
-          # Method 3 (line by line)
-          PRIV3=$(echo "$KEYS" | sed -n 1p | awk '{print $NF}')
-          PUB3=$(echo "$KEYS" | sed -n 2p | awk '{print $NF}')
-          echo "Method 3 - PRIV: [$PRIV3]"
-          echo "Method 3 - PUB: [$PUB3]"
-          
-          # انتخاب روش موفق
-          if [ -n "$PUB1" ]; then
-            PRIV="$PRIV1"
-            PUB="$PUB1"
-            echo "✅ Using Method 1"
-          elif [ -n "$PUB2" ]; then
-            PRIV="$PRIV2"
-            PUB="$PUB2"
-            echo "✅ Using Method 2"
-          elif [ -n "$PUB3" ]; then
-            PRIV="$PRIV3"
-            PUB="$PUB3"
-            echo "✅ Using Method 3"
-          else
-            echo "❌ ALL METHODS FAILED!"
-            exit 1
-          fi
-          
-          SID=$(openssl rand -hex 8)
-          
-          echo ""
-          echo "📌 Final values:"
-          echo "UUID: $UUID"
-          echo "PRIV: $PRIV"
-          echo "PUB: $PUB"
-          echo "SID: $SID"
-          echo ""
-          
-          # بررسی نهایی
-          if [ -z "$PUB" ]; then
-            echo "❌ ERROR: PUB is still empty!"
-            exit 1
-          fi
-          
-          # 4. ساخت فایل کانفیگ
+          # ساخت کانفیگ بر پایه WebSocket (سازگار با تونل)
           sudo tee /usr/local/etc/xray/config.json > /dev/null <<EOF
           {
             "inbounds": [{
               "port": 443,
               "protocol": "vless",
               "settings": {
-                "clients": [{"id": "$UUID", "flow": "xtls-rprx-vision"}],
+                "clients": [{"id": "$UUID"}],
                 "decryption": "none"
               },
               "streamSettings": {
-                "network": "tcp",
-                "security": "reality",
-                "realitySettings": {
-                  "show": false,
-                  "dest": "www.google.com:443",
-                  "xver": 0,
-                  "serverNames": ["www.google.com"],
-                  "privateKey": "$PRIV",
-                  "shortIds": ["$SID"]
+                "network": "ws",
+                "wsSettings": {
+                  "path": "/shahan-vpx"
                 }
               }
             }],
@@ -113,25 +37,28 @@ jobs:
           EOF
           
           sudo systemctl restart xray
-          
-          # 5. نصب Ngrok
+          echo "UUID=$UUID" >> $GITHUB_ENV
+
+      - name: Start Ngrok
+        run: |
           curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
           echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
           sudo apt update && sudo apt install -y ngrok
           ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          
+          # اجرای تونل روی پورت 443
           ngrok tcp 443 --log=stdout > ngrok.log &
           sleep 20
           
-          # 6. استخراج آدرس
           ADDR=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' | sed 's/tcp:\/\///')
           HOST=$(echo "$ADDR" | cut -d':' -f1)
           PORT=$(echo "$ADDR" | cut -d':' -f2)
           
           echo "======================================"
-          echo "✅ SHAHAN REALITY CONFIG"
+          echo "✅ SHAHAN VLESS+WS READY"
           echo "======================================"
-          echo "vless://$UUID@$HOST:$PORT?security=reality&sni=www.google.com&fp=chrome&pbk=$PUB&sid=$SID&type=tcp&flow=xtls-rprx-vision#Shahan_Reality"
+          echo "vless://${{ env.UUID }}@$HOST:$PORT?type=ws&path=/shahan-vpx#Shahan_WS"
           echo "======================================"
-          
+
       - name: Keep Alive
         run: sleep 21600
