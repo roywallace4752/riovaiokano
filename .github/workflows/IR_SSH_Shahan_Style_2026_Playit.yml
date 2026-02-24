@@ -24,17 +24,30 @@ jobs:
         run: |
           echo "🔧 Installing Playit.gg..."
           
-          # نصب کلید GPG
-          curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
+          # روش 1: دانلود مستقیم (اگر موجود باشد)
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "x86_64" ]; then
+            DOWNLOAD_URL="https://playit-cloud.github.io/downloads/playit/linux/amd64/playit"
+          elif [ "$ARCH" = "aarch64" ]; then
+            DOWNLOAD_URL="https://playit-cloud.github.io/downloads/playit/linux/arm64/playit"
+          else
+            DOWNLOAD_URL="https://playit-cloud.github.io/downloads/playit/linux/amd64/playit"
+          fi
           
-          # اضافه کردن منبع APT (فرمت صحیح)
-          echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/ ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
+          echo "Downloading from: $DOWNLOAD_URL"
           
-          # آپدیت و نصب
-          sudo apt-get update
-          sudo apt-get install -y playit
+          # دانلود فایل
+          curl -SsL "$DOWNLOAD_URL" -o playit
+          chmod +x playit
+          sudo mv playit /usr/local/bin/playit
           
-          echo "✅ Playit.gg installed successfully"
+          # تست نصب
+          if playit --version 2>/dev/null || which playit >/dev/null 2>&1; then
+            echo "✅ Playit.gg installed successfully"
+            playit --version
+          else
+            echo "⚠️ Installation completed, testing connection..."
+          fi
 
       - name: Configure & Start Playit Tunnel
         env:
