@@ -8,33 +8,52 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Setup SSH Environment
+      - name: Setup SSH Server
         run: |
           sudo apt-get update
-          sudo apt-get install -y openssh-server curl jq
+          sudo apt-get install -y openssh-server jq curl
 
           sudo useradd -m -s /bin/bash shahan_user
           echo "shahan_user:pass1234" | sudo chpasswd
-          
-          sudo service ssh start
 
-      - name: Install Zrok
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+          sudo service ssh restart
+
+      - name: Install Zrok (Stable Method)
         run: |
-          curl -sSfL https://get.zrok.io | sudo bash
+          VERSION=$(curl -s https://api.github.com/repos/openziti/zrok/releases/latest | jq -r .tag_name)
+          FILE="zrok_${VERSION#v}_linux_amd64.tar.gz"
+
+          curl -L https://github.com/openziti/zrok/releases/download/${VERSION}/${FILE} -o zrok.tar.gz
+          tar -xzf zrok.tar.gz
+
+          sudo mv zrok /usr/local/bin/
+          sudo chmod +x /usr/local/bin/zrok
+
+          zrok version
 
       - name: Enable Zrok Environment
         run: |
           zrok enable ${{ secrets.ZROK_ENABLE_TOKEN }}
 
-      - name: Start Zrok TCP Tunnel
+      - name: Start Public TCP Tunnel
         run: |
+          set -e
+
           zrok share public tcp://localhost:22 > zrok.log 2>&1 &
-          sleep 10
-          
-          PUBLIC_ENDPOINT=$(grep -o 'tcp://.*' zrok.log | head -n1)
-          
-          HOST=$(echo $PUBLIC_ENDPOINT | sed 's/tcp:\/\///' | cut -d':' -f1)
-          PORT=$(echo $PUBLIC_ENDPOINT | cut -d':' -f3)
+          sleep 8
+
+          if ! grep -q "tcp://" zrok.log; then
+            echo "❌ Public TCP not allowed in your plan."
+            cat zrok.log
+            exit 1
+          fi
+
+          ENDPOINT=$(grep -o 'tcp://[^ ]*' zrok.log | head -n1)
+          HOST=$(echo $ENDPOINT | sed 's|tcp://||' | cut -d':' -f1)
+          PORT=$(echo $ENDPOINT | cut -d':' -f3)
 
           echo "======================================"
           echo "✅ SSH Ready via ZROK"
@@ -47,5 +66,5 @@ jobs:
 
       - name: Keep Runner Alive
         run: |
-          echo "SSH Server is live via Zrok."
+          echo "SSH Server is live..."
           sleep 21600
