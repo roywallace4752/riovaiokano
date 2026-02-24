@@ -1,0 +1,18 @@
+name: Get_Playit_Claim_Code
+on:
+  workflow_dispatch:
+jobs:
+  get_code:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install & Get Code
+        run: |
+          curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
+          echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
+          sudo apt update && sudo apt install playit -y
+          
+          echo "------------------------------------------------"
+          echo "👇 کد شما تا چند ثانیه دیگر در خط پایین ظاهر می‌شود:"
+          # اجرای پلی‌آیت برای گرفتن کد (فقط ۱۰ ثانیه)
+          timeout 15s playit setup --user-code || true
+          echo "------------------------------------------------"
