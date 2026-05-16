@@ -1,0 +1,147 @@
+name: Ultimate Ephemeral Vercel Pipeline
+
+on:
+  workflow_dispatch: # اجرای دستی از طریق پنل گیت‌هاب
+
+jobs:
+  build-and-tunnel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq unzip
+
+      - name: Install Xray
+        run: |
+          sudo bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+          
+      - name: Configure Xray (vless + xhttp)
+        run: |
+          sudo mkdir -p /usr/local/etc/xray
+          sudo bash -c "cat << 'EOF' > /usr/local/etc/xray/config.json
+          {
+            "log": {
+              "loglevel": "warning"
+            },
+            "inbounds": [
+              {
+                "port": 6969,
+                "protocol": "vless",
+                "settings": {
+                  "clients": [
+                    {
+                      "id": "61e89599-47de-45ca-93ba-8a84e89d7391"
+                    }
+                  ],
+                  "decryption": "none"
+                },
+                "streamSettings": {
+                  "network": "xhttp",
+                  "xhttpSettings": {
+                    "path": "/api",
+                    "mode": "auto"
+                  }
+                }
+              }
+            ],
+            "outbounds": [
+              {
+                "protocol": "freedom"
+              }
+            ]
+          }
+          EOF"
+          sudo systemctl restart xray
+
+      - name: Install & Start Cloudflare Quick Tunnel
+        run: |
+          sudo curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared.deb
+          
+          # اجرای تانل با سودو و ذخیره لاگ برای بیرون کشیدن آدرس رندوم
+          sudo cloudflared tunnel --url http://localhost:6969 > cloudflared.log 2>&1 &
+          
+          # کمی صبر برای برقرار شدن تانل
+          sleep 12
+          
+          # پیدا کردن آدرس trycloudflare از داخل لاگ
+          TUNNEL_URL=$(grep -oE "https://[a-zA-Z0-9-]+.trycloudflare.com" cloudflared.log | head -n 1)
+          echo "CF_TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
+          echo "Cloudflare Tunnel URL is: $TUNNEL_URL"
+
+      - name: Download and Extract Theme1 Project
+        run: |
+          sudo curl -L https://github.com/masezahedi/theme1/archive/refs/heads/main.zip -o theme1.zip
+          sudo unzip theme1.zip
+          cd theme1-main
+          echo "PROJECT_DIR=$(pwd)" >> $GITHUB_ENV
+
+      - name: Update vercel.json with Cloudflare Tunnel URL
+        run: |
+          cd ${{ env.PROJECT_DIR }}
+          
+          # ساخت فایل vercel.json با دسترسی سودو بر اساس آدرس تانل شما
+          sudo bash -c "cat << EOF > vercel.json
+          {
+            "version": 2,
+            "rewrites": [
+              {
+                "source": "/api/:path*",
+                "destination": "${{ env.CF_TUNNEL_URL }}/api/:path*"
+              }
+            ],
+            "headers": [
+              {
+                "source": "/api/:path*",
+                "headers": [
+                  {
+                    "key": "Cache-Control",
+                    "value": "no-store"
+                  },
+                  {
+                    "key": "CDN-Cache-Control",
+                    "value": "no-store"
+                  },
+                  {
+                    "key": "Vercel-CDN-Cache-Control",
+                    "value": "no-store"
+                  }
+                ]
+              }
+            ]
+          }
+          EOF"
+          sudo cat vercel.json
+
+      - name: Install Vercel CLI & Deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          sudo npm install -g vercel --unsafe-perm
+          cd ${{ env.PROJECT_DIR }}
+          
+          # دپلوی در حالت پروداکشن با دسترسی سودو و گرفتن لینک نهایی
+          VERCEL_URL=$(sudo vercel --token=$VERCEL_TOKEN --prod --yes --scope=personal)
+          
+          # پاک کردن پروتکل https:// از ابتدای لینک ورسل برای قرار دادن در host کانفیگ
+          CLEAN_VERCEL_URL=$(echo $VERCEL_URL | sed -e 's/https:\/\///g')
+          
+          echo "--------------------------------------------------"
+          echo "🔥 DEPLOYMENT SUCCESSFUL! 🔥"
+          echo "Vercel Project URL: $VERCEL_URL"
+          echo "--------------------------------------------------"
+          
+          # ساخت و نمایش کانفیگ نهایی VLESS
+          FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@$CLEAN_VERCEL_URL:443?encryption=none&security=tls&fp=chrome&insecure=1&allowInsecure=1&type=xhttp&host=$CLEAN_VERCEL_URL&path=%2Fapi&mode=auto#MZF"
+          
+          echo ""
+          echo "🎯 YOUR CLIENT CONFIG:"
+          echo "$FINAL_CONFIG"
+          echo ""
+          echo "--------------------------------------------------"
+
+      - name: Keep Runner Alive for 6 Hours
+        run: |
+          echo "Runner is alive and serving proxies. Sleeping for 6 hours..."
+          sleep 6h
