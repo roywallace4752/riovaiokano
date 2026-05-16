@@ -1,4 +1,4 @@
-name: Ultimate Stable Xray Vercel Pipeline
+name: Full Xray XHTTP Vercel Deployment via Localtunnel
 
 on:
   workflow_dispatch:
@@ -10,17 +10,15 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl jq unzip
+          sudo apt-get install -y curl jq unzip Node.js npm
 
       - name: Install Xray Official
         run: |
           sudo bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 
-      - name: Force Clean Custom Xray Config (VLESS + WS)
+      - name: Configure Xray (VLESS + XHTTP)
         run: |
-          sudo rm -f /usr/local/etc/xray/config.json
           sudo mkdir -p /usr/local/etc/xray
-          
           sudo tee /usr/local/etc/xray/config.json << 'EOF'
           {
             "log": {
@@ -39,9 +37,16 @@ jobs:
                   "decryption": "none"
                 },
                 "streamSettings": {
-                  "network": "ws",
-                  "wsSettings": {
-                    "path": "/api/vless"
+                  "network": "xhttp",
+                  "xhttpSettings": {
+                    "path": "/api",
+                    "mode": "packet-up",
+                    "extra": {
+                      "responseHeader": {
+                        "Content-Type": "application/octet-stream",
+                        "Transfer-Encoding": "chunked"
+                      }
+                    }
                   }
                 }
               }
@@ -53,84 +58,109 @@ jobs:
             ]
           }
           EOF
-          # متوقف کردن سرویس قبلی و اجرای مجدد به صورت کاملاً مستقل
-          sudo systemctl stop xray || true
-          sudo systemctl kill xray || true
-          sudo systemctl daemon-reload
-          sudo systemctl start xray
+          sudo systemctl restart xray
 
-      - name: Verify Xray is Actually on WS
+      - name: Start Localtunnel (No Account Needed)
         run: |
-          sleep 3
-          sudo systemctl status xray --no-pager
-          sudo ss -tulpn | grep 8080
-
-      - name: Install & Start Cloudflare Tunnel
-        run: |
-          sudo curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared.deb
+          sudo npm install -g localtunnel
           
-          sudo cloudflared tunnel --url http://127.0.0.1:8080 > cloudflared.log 2>&1 &
+          # اجرای لوکال‌تونل روی پورت 8080
+          lt --port 8080 > localtunnel.log 2>&1 &
           
-          TUNNEL_URL=""
+          # لوپ انتظار داینامیک برای دریافت یوآرال لوکال‌تونل
+          LT_URL=""
           for i in {1..15}; do
-            if [ -f cloudflared.log ]; then
-              TUNNEL_URL=$(grep -oE "https://[a-zA-Z0-9-]+.trycloudflare.com" cloudflared.log | head -n 1)
-              if [ ! -z "$TUNNEL_URL" ]; then
+            if [ -f localtunnel.log ]; then
+              LT_URL=$(grep -oE "https://[a-zA-Z0-9.-]+.loca.lt" localtunnel.log | head -n 1)
+              if [ ! -z "$LT_URL" ]; then
+                echo "🎯 Localtunnel URL generated successfully!"
                 break
               fi
             fi
-            echo "⏳ Waiting for Cloudflare Tunnel URL..."
+            echo "⏳ Waiting for Localtunnel URL (Attempt $i/15)..."
             sleep 2
           done
 
-          if [ -z "$TUNNEL_URL" ]; then
-            cat cloudflared.log
+          if [ -z "$LT_URL" ]; then
+            echo "❌ Error: Localtunnel failed to generate a URL!"
+            cat localtunnel.log
             exit 1
           fi
 
-          echo "CF_TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
-          echo "Tunnel Link: $TUNNEL_URL"
+          echo "LT_TUNNEL_URL=$LT_URL" >> $GITHUB_ENV
+          echo "Localtunnel Endpoint is: $LT_URL"
 
-      - name: Create Dynamic Vercel Project (Clean Setup)
+      - name: Create and Configure Vercel Project Deployment
         run: |
-          mkdir -p vercel_project/api
-          cd vercel_project
+          # ساخت یک دایرکتوری تمیز برای پروژه ورسل
+          mkdir -p vercel_deployment/api
+          cd vercel_deployment
           
-          # ساخت یک روت تمیز که ورسل نتواند در آن اختلال ایجاد کند
+          # ساخت فایل کانفیگ ریرایت ورسل برای هدایت ترافیک xhttp به لوکال‌تونل
           sudo tee vercel.json << EOF
           {
             "version": 2,
             "rewrites": [
               {
-                "source": "/api/vless",
-                "destination": "$CF_TUNNEL_URL/api/vless"
+                "source": "/api/:path*",
+                "destination": "$LT_TUNNEL_URL/api/:path*"
+              }
+            ],
+            "headers": [
+              {
+                "source": "/api/:path*",
+                "headers": [
+                  { "key": "Cache-Control", "value": "no-store" },
+                  { "key": "CDN-Cache-Control", "value": "no-store" },
+                  { "key": "Vercel-CDN-Cache-Control", "value": "no-store" }
+                ]
               }
             ]
           }
           EOF
+          
+          echo "=== Generated vercel.json ==="
+          cat vercel.json
+          echo "PROJECT_DIR=$(pwd)" >> $GITHUB_ENV
 
-      - name: Deploy to Vercel
+      - name: Install Vercel CLI & Deploy to Vercel CDN
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           sudo npm install -g vercel --unsafe-perm
-          cd vercel_project
+          cd ${{ env.PROJECT_DIR }}
           
+          # اجرای دپلویمنت مستقیم و خودکار روی پروداکشن ورسل
           VERCEL_OUTPUT=$(sudo vercel --token=$VERCEL_TOKEN --prod --yes)
           echo "$VERCEL_OUTPUT"
           
+          # استخراج دامنه ورسل
           VERCEL_URL=$(echo "$VERCEL_OUTPUT" | grep -oE "https://[a-zA-Z0-9-]+.vercel.app" | head -n 1)
+          
+          if [ -z "$VERCEL_URL" ]; then
+            echo "❌ Error: Vercel Deployment failed or URL not found!"
+            exit 1
+          fi
+          
           CLEAN_VERCEL_URL=$(echo $VERCEL_URL | sed -e 's/https:\/\///g')
           
           echo "--------------------------------------------------"
-          echo "🎯 NEW CLEAN CONNECTION CONFIG:"
-          echo "vless://61e89599-47de-45ca-93ba-8a84e89d7391@$CLEAN_VERCEL_URL:443?encryption=none&security=tls&fp=chrome&type=ws&host=$CLEAN_VERCEL_URL&path=%2Fapi%2Fvless#MZF_FIXED_WS"
+          echo "🔥 DEPLOYMENT SUCCESSFUL! 🔥"
+          echo "Vercel Frontend URL: $VERCEL_URL"
+          echo "--------------------------------------------------"
+          
+          # تولید لینک ساب‌سکرایب / کانفیگ نهایی برای کلاینت شما بر پایه ورسل و xhttp
+          FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@$CLEAN_VERCEL_URL:443?encryption=none&security=tls&fp=chrome&insecure=1&allowInsecure=1&type=xhttp&host=$CLEAN_VERCEL_URL&path=%2Fapi&mode=packet-up#Vercel_LT_XHTTP"
+          
+          echo ""
+          echo "🎯 YOUR CLIENT CONFIG:"
+          echo "$FINAL_CONFIG"
+          echo ""
           echo "--------------------------------------------------"
 
-      - name: Keep Runner Alive
+      - name: Keep Runner Alive & Monitor
         run: |
-          echo "Runner is actively tunnelled. Watching logs..."
+          echo "Runner is actively tunnelled to Vercel. Serving XHTTP proxies..."
           sudo journalctl -u xray -f &
-          sudo tail -f cloudflared.log &
+          tail -f localtunnel.log &
           sleep 6h
