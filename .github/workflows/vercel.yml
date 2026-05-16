@@ -1,4 +1,4 @@
-name: Ultimate Ephemeral  Vercel Pipeline
+name: Ultimate Ephemeral Xray Vercel Pipeline
 
 on:
   workflow_dispatch: # اجرای دستی از طریق پنل گیت‌هاب
@@ -123,8 +123,17 @@ jobs:
           sudo npm install -g vercel --unsafe-perm
           cd ${{ env.PROJECT_DIR }}
           
-          # دپلوی در حالت پروداکشن با دسترسی سودو و گرفتن لینک نهایی
-          VERCEL_URL=$(sudo vercel --token=$VERCEL_TOKEN --prod --yes --scope=personal)
+          # دپلوی در حالت پروداکشن (بدون فلگ اسکوپ اضافی) و ذخیره کل خروجی ترمینال
+          VERCEL_OUTPUT=$(sudo vercel --token=$VERCEL_TOKEN --prod --yes)
+          echo "$VERCEL_OUTPUT"
+          
+          # استخراج دقیق و هوشمندانه لینک دپلوی شده از بین لاگ‌ها
+          VERCEL_URL=$(echo "$VERCEL_OUTPUT" | grep -oE "https://[a-zA-Z0-9-]+.vercel.app" | head -n 1)
+          
+          if [ -z "$VERCEL_URL" ]; then
+            echo "❌ Error: Could not extract Vercel Deployment URL!"
+            exit 1
+          fi
           
           # پاک کردن پروتکل https:// از ابتدای لینک ورسل برای قرار دادن در host کانفیگ
           CLEAN_VERCEL_URL=$(echo $VERCEL_URL | sed -e 's/https:\/\///g')
