@@ -1,4 +1,4 @@
-name: Ultimate Ephemeral Vercel Pipeline
+name: Ultimate Ephemeral  Vercel Pipeline
 
 on:
   workflow_dispatch: # اجرای دستی از طریق پنل گیت‌هاب
@@ -19,7 +19,9 @@ jobs:
       - name: Configure Xray (vless + xhttp)
         run: |
           sudo mkdir -p /usr/local/etc/xray
-          sudo bash -c "cat << 'EOF' > /usr/local/etc/xray/config.json
+          
+          # ساخت فایل کانفیگ بدون تداخل کوتیشن‌ها با ابزار tee
+          sudo tee /usr/local/etc/xray/config.json << 'EOF'
           {
             "log": {
               "loglevel": "warning"
@@ -51,7 +53,7 @@ jobs:
               }
             ]
           }
-          EOF"
+          EOF
           sudo systemctl restart xray
 
       - name: Install & Start Cloudflare Quick Tunnel
@@ -66,7 +68,7 @@ jobs:
           sleep 12
           
           # پیدا کردن آدرس trycloudflare از داخل لاگ
-          TUNNEL_URL=$(grep -oE "https://[a-zA-Z0-9-]+.trycloudflare.com" cloudflared.log | head -n 1)
+          TUNNEL_URL=$(sudo grep -oE "https://[a-zA-Z0-9-]+.trycloudflare.com" cloudflared.log | head -n 1)
           echo "CF_TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
           echo "Cloudflare Tunnel URL is: $TUNNEL_URL"
 
@@ -81,14 +83,14 @@ jobs:
         run: |
           cd ${{ env.PROJECT_DIR }}
           
-          # ساخت فایل vercel.json با دسترسی سودو بر اساس آدرس تانل شما
-          sudo bash -c "cat << EOF > vercel.json
+          # ساخت فایل vercel.json تمیز با سودو و جایگذاری آدرس تانل کلودفلر
+          sudo tee vercel.json << EOF
           {
             "version": 2,
             "rewrites": [
               {
                 "source": "/api/:path*",
-                "destination": "${{ env.CF_TUNNEL_URL }}/api/:path*"
+                "destination": "$CF_TUNNEL_URL/api/:path*"
               }
             ],
             "headers": [
@@ -111,7 +113,7 @@ jobs:
               }
             ]
           }
-          EOF"
+          EOF
           sudo cat vercel.json
 
       - name: Install Vercel CLI & Deploy
