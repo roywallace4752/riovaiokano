@@ -1,7 +1,7 @@
-name: Ultimate Ephemeral Xray Vercel Pipeline (WebSocket Mode)
+name: Ultimate Stable Xray Vercel Pipeline
 
 on:
-  workflow_dispatch: # اجرای دستی از طریق پنل گیت‌هاب
+  workflow_dispatch:
 
 jobs:
   build-and-tunnel:
@@ -12,12 +12,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl jq unzip
 
-      - name: Install Xray
+      - name: Install Xray Official
         run: |
           sudo bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-          
-      - name: Configure Xray (vless + ws)
+
+      - name: Force Clean Custom Xray Config (VLESS + WS)
         run: |
+          sudo rm -f /usr/local/etc/xray/config.json
           sudo mkdir -p /usr/local/etc/xray
           
           sudo tee /usr/local/etc/xray/config.json << 'EOF'
@@ -27,7 +28,7 @@ jobs:
             },
             "inbounds": [
               {
-                "port": 6969,
+                "port": 8080,
                 "protocol": "vless",
                 "settings": {
                   "clients": [
@@ -40,7 +41,7 @@ jobs:
                 "streamSettings": {
                   "network": "ws",
                   "wsSettings": {
-                    "path": "/graphql"
+                    "path": "/api/vless"
                   }
                 }
               }
@@ -52,110 +53,84 @@ jobs:
             ]
           }
           EOF
-          sudo systemctl restart xray
+          # متوقف کردن سرویس قبلی و اجرای مجدد به صورت کاملاً مستقل
+          sudo systemctl stop xray || true
+          sudo systemctl kill xray || true
+          sudo systemctl daemon-reload
+          sudo systemctl start xray
 
-      - name: Check Xray Status
+      - name: Verify Xray is Actually on WS
         run: |
-          echo "=== Xray Service Status ==="
-          sudo systemctl status xray --no-pager || true
-          echo "=== Checking if Port 6969 is Listening ==="
-          sudo ss -tulpn | grep 6969 || echo "Port 6969 is NOT listening!"
+          sleep 3
+          sudo systemctl status xray --no-pager
+          sudo ss -tulpn | grep 8080
 
-      - name: Install & Start Cloudflare Quick Tunnel
+      - name: Install & Start Cloudflare Tunnel
         run: |
           sudo curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared.deb
           
-          # استارت تانل معمولی (وب‌ساکت با همان http معمولی کلودفلر سازگار است)
-          sudo cloudflared tunnel --url http://127.0.0.1:6969 > cloudflared.log 2>&1 &
+          sudo cloudflared tunnel --url http://127.0.0.1:8080 > cloudflared.log 2>&1 &
           
-          # لوپ انتظار داینامیک برای مطمئن شدن از دریافت آدرس تانل
           TUNNEL_URL=""
           for i in {1..15}; do
             if [ -f cloudflared.log ]; then
               TUNNEL_URL=$(grep -oE "https://[a-zA-Z0-9-]+.trycloudflare.com" cloudflared.log | head -n 1)
               if [ ! -z "$TUNNEL_URL" ]; then
-                echo "🎯 Cloudflare Tunnel established successfully!"
                 break
               fi
             fi
-            echo "⏳ Waiting for Cloudflare Tunnel to generate URL (Attempt $i/15)..."
+            echo "⏳ Waiting for Cloudflare Tunnel URL..."
             sleep 2
           done
 
           if [ -z "$TUNNEL_URL" ]; then
-            echo "❌ Error: Cloudflare Tunnel failed to generate a URL!"
-            echo "=== Cloudflared Logs ==="
             cat cloudflared.log
             exit 1
           fi
 
           echo "CF_TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
-          echo "Cloudflare Tunnel URL is: $TUNNEL_URL"
+          echo "Tunnel Link: $TUNNEL_URL"
 
-      - name: Download and Extract Theme1 Project
+      - name: Create Dynamic Vercel Project (Clean Setup)
         run: |
-          sudo curl -L https://github.com/masezahedi/theme1/archive/refs/heads/main.zip -o theme1.zip
-          sudo unzip theme1.zip
-          cd theme1-main
-          echo "PROJECT_DIR=$(pwd)" >> $GITHUB_ENV
-
-      - name: Update vercel.json with Cloudflare Tunnel URL
-        run: |
-          cd ${{ env.PROJECT_DIR }}
+          mkdir -p vercel_project/api
+          cd vercel_project
           
+          # ساخت یک روت تمیز که ورسل نتواند در آن اختلال ایجاد کند
           sudo tee vercel.json << EOF
           {
             "version": 2,
             "rewrites": [
               {
-                "source": "/graphql",
-                "destination": "$CF_TUNNEL_URL/graphql"
+                "source": "/api/vless",
+                "destination": "$CF_TUNNEL_URL/api/vless"
               }
             ]
           }
           EOF
-          sudo cat vercel.json
 
-      - name: Install Vercel CLI & Deploy
+      - name: Deploy to Vercel
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           sudo npm install -g vercel --unsafe-perm
-          cd ${{ env.PROJECT_DIR }}
+          cd vercel_project
           
           VERCEL_OUTPUT=$(sudo vercel --token=$VERCEL_TOKEN --prod --yes)
           echo "$VERCEL_OUTPUT"
           
           VERCEL_URL=$(echo "$VERCEL_OUTPUT" | grep -oE "https://[a-zA-Z0-9-]+.vercel.app" | head -n 1)
-          
-          if [ -z "$VERCEL_URL" ]; then
-            echo "❌ Error: Could not extract Vercel Deployment URL!"
-            exit 1
-          fi
-          
           CLEAN_VERCEL_URL=$(echo $VERCEL_URL | sed -e 's/https:\/\///g')
           
           echo "--------------------------------------------------"
-          echo "🔥 DEPLOYMENT SUCCESSFUL! 🔥"
-          echo "Vercel Project URL: $VERCEL_URL"
-          echo "--------------------------------------------------"
-          
-          # کانفیگ برپایه وب‌ساکت (بدون انگولک لایه هدر ورسل)
-          FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@$CLEAN_VERCEL_URL:443?encryption=none&security=tls&fp=chrome&type=ws&host=$CLEAN_VERCEL_URL&path=%2Fgraphql#MZF_WS"
-          
-          echo ""
-          echo "🎯 YOUR CLIENT CONFIG:"
-          echo "$FINAL_CONFIG"
-          echo ""
+          echo "🎯 NEW CLEAN CONNECTION CONFIG:"
+          echo "vless://61e89599-47de-45ca-93ba-8a84e89d7391@$CLEAN_VERCEL_URL:443?encryption=none&security=tls&fp=chrome&type=ws&host=$CLEAN_VERCEL_URL&path=%2Fapi%2Fvless#MZF_FIXED_WS"
           echo "--------------------------------------------------"
 
-      - name: Keep Runner Alive for 6 Hours
+      - name: Keep Runner Alive
         run: |
-          echo "Runner is alive and serving proxies. Sleeping for 6 hours..."
-          
-          # نمایش زنده لاگ‌ها جهت عیب‌یابی
+          echo "Runner is actively tunnelled. Watching logs..."
           sudo journalctl -u xray -f &
           sudo tail -f cloudflared.log &
-          
           sleep 6h
