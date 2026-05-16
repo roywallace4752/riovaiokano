@@ -67,8 +67,8 @@ jobs:
           sudo curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared.deb
           
-          # تغییر کلیدی: فورس کردن کلودفلر به استفاده از http2 برای اتصال به ایکس‌ری
-          sudo cloudflared tunnel --url http2://127.0.0.1:6969 > cloudflared.log 2>&1 &
+          # اصلاح کلیدی: استفاده از پروتکل استاندارد و فلگ فعال‌ساز HTTP/2 برای اوریجین
+          sudo cloudflared tunnel --url http://127.0.0.1:6969 --http2-origin > cloudflared.log 2>&1 &
           
           # لوپ انتظار داینامیک برای مطمئن شدن از دریافت آدرس تانل
           TUNNEL_URL=""
@@ -161,7 +161,7 @@ jobs:
           echo "Vercel Project URL: $VERCEL_URL"
           echo "--------------------------------------------------"
           
-          FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@vercel.com:443?encryption=none&security=tls&fp=chrome&insecure=1&allowInsecure=1&type=xhttp&host=$CLEAN_VERCEL_URL&path=%2Fapi&mode=auto#MZF"
+          FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@$CLEAN_VERCEL_URL:443?encryption=none&security=tls&fp=chrome&insecure=1&allowInsecure=1&type=xhttp&host=$CLEAN_VERCEL_URL&path=%2Fapi&mode=auto#MZF"
           
           echo ""
           echo "🎯 YOUR CLIENT CONFIG:"
@@ -173,7 +173,7 @@ jobs:
         run: |
           echo "Runner is alive and serving proxies. Sleeping for 6 hours..."
           
-          # نمایش زنده همزمان لاگ‌های کلودفلر و لاگ‌های سیستم داخلی ایکس‌ری
+          # نمایش زنده لاگ‌ها
           sudo journalctl -u xray -f &
           sudo tail -f cloudflared.log &
           
