@@ -20,7 +20,6 @@ jobs:
         run: |
           sudo mkdir -p /usr/local/etc/xray
           
-          # ساخت فایل کانفیگ بدون تداخل کوتیشن‌ها با ابزار tee
           sudo tee /usr/local/etc/xray/config.json << 'EOF'
           {
             "log": {
@@ -56,18 +55,24 @@ jobs:
           EOF
           sudo systemctl restart xray
 
+      - name: Check Xray Status (Debug)
+        run: |
+          echo "=== Xray Service Status ==="
+          sudo systemctl status xray --no-pager || true
+          echo "=== Checking if Port 6969 is Listening ==="
+          sudo ss -tulpn | grep 6969 || echo "Port 6969 is NOT listening!"
+
       - name: Install & Start Cloudflare Quick Tunnel
         run: |
           sudo curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared.deb
           
-          # اجرای تانل با سودو و ذخیره لاگ برای بیرون کشیدن آدرس رندوم
-          sudo cloudflared tunnel --url http://localhost:6969 > cloudflared.log 2>&1 &
+          # اجرای تانل و هدایت ترافیک به پورت داخلی ایکس‌ری
+          sudo cloudflared tunnel --url http://127.0.0.1:6969 > cloudflared.log 2>&1 &
           
-          # کمی صبر برای برقرار شدن تانل
           sleep 12
           
-          # پیدا کردن آدرس trycloudflare از داخل لاگ
+          # استخراج آدرس تانل کلودفلر
           TUNNEL_URL=$(sudo grep -oE "https://[a-zA-Z0-9-]+.trycloudflare.com" cloudflared.log | head -n 1)
           echo "CF_TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
           echo "Cloudflare Tunnel URL is: $TUNNEL_URL"
@@ -83,7 +88,6 @@ jobs:
         run: |
           cd ${{ env.PROJECT_DIR }}
           
-          # ساخت فایل vercel.json تمیز با سودو و جایگذاری آدرس تانل کلودفلر
           sudo tee vercel.json << EOF
           {
             "version": 2,
@@ -123,11 +127,9 @@ jobs:
           sudo npm install -g vercel --unsafe-perm
           cd ${{ env.PROJECT_DIR }}
           
-          # دپلوی در حالت پروداکشن (بدون فلگ اسکوپ اضافی) و ذخیره کل خروجی ترمینال
           VERCEL_OUTPUT=$(sudo vercel --token=$VERCEL_TOKEN --prod --yes)
           echo "$VERCEL_OUTPUT"
           
-          # استخراج دقیق و هوشمندانه لینک دپلوی شده از بین لاگ‌ها
           VERCEL_URL=$(echo "$VERCEL_OUTPUT" | grep -oE "https://[a-zA-Z0-9-]+.vercel.app" | head -n 1)
           
           if [ -z "$VERCEL_URL" ]; then
@@ -135,7 +137,6 @@ jobs:
             exit 1
           fi
           
-          # پاک کردن پروتکل https:// از ابتدای لینک ورسل برای قرار دادن در host کانفیگ
           CLEAN_VERCEL_URL=$(echo $VERCEL_URL | sed -e 's/https:\/\///g')
           
           echo "--------------------------------------------------"
@@ -143,8 +144,7 @@ jobs:
           echo "Vercel Project URL: $VERCEL_URL"
           echo "--------------------------------------------------"
           
-          # ساخت و نمایش کانفیگ نهایی VLESS
-          FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@$CLEAN_VERCEL_URL:443?encryption=none&security=tls&fp=chrome&insecure=1&allowInsecure=1&type=xhttp&host=$CLEAN_VERCEL_URL&path=%2Fapi&mode=auto#MZF"
+          FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@vercel.com:443?encryption=none&security=tls&fp=chrome&insecure=1&allowInsecure=1&type=xhttp&host=$CLEAN_VERCEL_URL&path=%2Fapi&mode=auto#MZF"
           
           echo ""
           echo "🎯 YOUR CLIENT CONFIG:"
