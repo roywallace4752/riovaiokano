@@ -41,7 +41,7 @@ jobs:
                   "network": "xhttp",
                   "xhttpSettings": {
                     "path": "/api",
-                    "mode": "auto"
+                    "mode": "packet-up"
                   }
                 }
               }
@@ -55,7 +55,7 @@ jobs:
           EOF
           sudo systemctl restart xray
 
-      - name: Check Xray Status (Debug)
+      - name: Check Xray Status
         run: |
           echo "=== Xray Service Status ==="
           sudo systemctl status xray --no-pager || true
@@ -67,13 +67,30 @@ jobs:
           sudo curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared.deb
           
-          # اجرای تانل و هدایت ترافیک به پورت داخلی ایکس‌ری
+          # اجرای تانل کلودفلر
           sudo cloudflared tunnel --url http://127.0.0.1:6969 > cloudflared.log 2>&1 &
           
-          sleep 12
-          
-          # استخراج آدرس تانل کلودفلر
-          TUNNEL_URL=$(sudo grep -oE "https://[a-zA-Z0-9-]+.trycloudflare.com" cloudflared.log | head -n 1)
+          # لوپ انتظار داینامیک برای مطمئن شدن از دریافت آدرس تانل
+          TUNNEL_URL=""
+          for i in {1..15}; do
+            if [ -f cloudflared.log ]; then
+              TUNNEL_URL=$(grep -oE "https://[a-zA-Z0-9-]+.trycloudflare.com" cloudflared.log | head -n 1)
+              if [ ! -z "$TUNNEL_URL" ]; then
+                echo "🎯 Cloudflare Tunnel established successfully!"
+                break
+              fi
+            fi
+            echo "⏳ Waiting for Cloudflare Tunnel to generate URL (Attempt $i/15)..."
+            sleep 2
+          done
+
+          if [ -z "$TUNNEL_URL" ]; then
+            echo "❌ Error: Cloudflare Tunnel failed to generate a URL!"
+            echo "=== Cloudflared Logs ==="
+            cat cloudflared.log
+            exit 1
+          fi
+
           echo "CF_TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
           echo "Cloudflare Tunnel URL is: $TUNNEL_URL"
 
@@ -144,7 +161,7 @@ jobs:
           echo "Vercel Project URL: $VERCEL_URL"
           echo "--------------------------------------------------"
           
-          FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@vercel.com:443?encryption=none&security=tls&fp=chrome&insecure=1&allowInsecure=1&type=xhttp&host=$CLEAN_VERCEL_URL&path=%2Fapi&mode=auto#MZF"
+          FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@$CLEAN_VERCEL_URL:443?encryption=none&security=tls&fp=chrome&insecure=1&allowInsecure=1&type=xhttp&host=$CLEAN_VERCEL_URL&path=%2Fapi&mode=auto#MZF"
           
           echo ""
           echo "🎯 YOUR CLIENT CONFIG:"
@@ -155,4 +172,6 @@ jobs:
       - name: Keep Runner Alive for 6 Hours
         run: |
           echo "Runner is alive and serving proxies. Sleeping for 6 hours..."
+          # مانیتور کردن زنده لاگ‌های کلودفلر و ایکس‌ری در طول ۶ ساعت آینده
+          sudo tail -f cloudflared.log &
           sleep 6h
