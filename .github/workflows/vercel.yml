@@ -1,4 +1,4 @@
-name: Ultimate Ephemeral Xray Vercel Pipeline
+name: Ultimate Ephemeral Xray Vercel Pipeline (WebSocket Mode)
 
 on:
   workflow_dispatch: # اجرای دستی از طریق پنل گیت‌هاب
@@ -16,7 +16,7 @@ jobs:
         run: |
           sudo bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
           
-      - name: Configure Xray (vless + xhttp optimized for Serverless)
+      - name: Configure Xray (vless + ws)
         run: |
           sudo mkdir -p /usr/local/etc/xray
           
@@ -38,16 +38,9 @@ jobs:
                   "decryption": "none"
                 },
                 "streamSettings": {
-                  "network": "xhttp",
-                  "xhttpSettings": {
-                    "path": "/api",
-                    "mode": "packet-up",
-                    "extra": {
-                      "responseHeader": {
-                        "Content-Type": "application/octet-stream",
-                        "Transfer-Encoding": "chunked"
-                      }
-                    }
+                  "network": "ws",
+                  "wsSettings": {
+                    "path": "/graphql"
                   }
                 }
               }
@@ -73,8 +66,8 @@ jobs:
           sudo curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared.deb
           
-          # استفاده از پروتکل استاندارد و فلگ فعال‌ساز HTTP/2 برای اوریجین
-          sudo cloudflared tunnel --url http://127.0.0.1:6969 --http2-origin > cloudflared.log 2>&1 &
+          # استارت تانل معمولی (وب‌ساکت با همان http معمولی کلودفلر سازگار است)
+          sudo cloudflared tunnel --url http://127.0.0.1:6969 > cloudflared.log 2>&1 &
           
           # لوپ انتظار داینامیک برای مطمئن شدن از دریافت آدرس تانل
           TUNNEL_URL=""
@@ -116,27 +109,8 @@ jobs:
             "version": 2,
             "rewrites": [
               {
-                "source": "/api/:path*",
-                "destination": "$CF_TUNNEL_URL/api/:path*"
-              }
-            ],
-            "headers": [
-              {
-                "source": "/api/:path*",
-                "headers": [
-                  {
-                    "key": "Cache-Control",
-                    "value": "no-store"
-                  },
-                  {
-                    "key": "CDN-Cache-Control",
-                    "value": "no-store"
-                  },
-                  {
-                    "key": "Vercel-CDN-Cache-Control",
-                    "value": "no-store"
-                  }
-                ]
+                "source": "/graphql",
+                "destination": "$CF_TUNNEL_URL/graphql"
               }
             ]
           }
@@ -167,8 +141,8 @@ jobs:
           echo "Vercel Project URL: $VERCEL_URL"
           echo "--------------------------------------------------"
           
-          # لینک کانفیگ نهایی کلاینت آپدیت‌شده با xhttp settings جدید
-          FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@$CLEAN_VERCEL_URL:443?encryption=none&security=tls&fp=chrome&insecure=1&allowInsecure=1&type=xhttp&host=$CLEAN_VERCEL_URL&path=%2Fapi&mode=packet-up#MZF"
+          # کانفیگ برپایه وب‌ساکت (بدون انگولک لایه هدر ورسل)
+          FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@$CLEAN_VERCEL_URL:443?encryption=none&security=tls&fp=chrome&type=ws&host=$CLEAN_VERCEL_URL&path=%2Fgraphql#MZF_WS"
           
           echo ""
           echo "🎯 YOUR CLIENT CONFIG:"
@@ -180,7 +154,7 @@ jobs:
         run: |
           echo "Runner is alive and serving proxies. Sleeping for 6 hours..."
           
-          # نمایش زنده لاگ‌ها جهت عیب‌یابی رفتاری کلاینت
+          # نمایش زنده لاگ‌ها جهت عیب‌یابی
           sudo journalctl -u xray -f &
           sudo tail -f cloudflared.log &
           
