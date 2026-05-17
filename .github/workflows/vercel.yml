@@ -1,12 +1,11 @@
 name: Ultimate Ephemeral Xray Vercel Pipeline
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # اجرای دستی از طریق پنل گیت‌هاب
 
 jobs:
   build-and-tunnel:
     runs-on: ubuntu-latest
-
     steps:
       - name: Install Dependencies
         run: |
@@ -16,22 +15,19 @@ jobs:
       - name: Install Xray
         run: |
           sudo bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-
-      - name: Configure Xray (VLESS + XHTTP packet-up)
+          
+      - name: Configure Xray (vless + xhttp optimized for Serverless)
         run: |
           sudo mkdir -p /usr/local/etc/xray
           
           sudo tee /usr/local/etc/xray/config.json << 'EOF'
           {
             "log": {
-              "loglevel": "warning",
-              "access": "/var/log/xray/access.log",
-              "error": "/var/log/xray/error.log"
+              "loglevel": "info"
             },
             "inbounds": [
               {
                 "port": 6969,
-                "listen": "127.0.0.1",
                 "protocol": "vless",
                 "settings": {
                   "clients": [
@@ -63,72 +59,65 @@ jobs:
             ]
           }
           EOF
+          sudo systemctl restart xray
 
-      - name: Fix Permissions & Start Xray
+      - name: Check Xray Status
         run: |
-          sudo mkdir -p /var/log/xray
-          sudo chown -R $USER:$USER /var/log/xray /usr/local/etc/xray
-          sudo chmod -R 777 /var/log/xray
-
-          sudo pkill xray || true
-          
-          # اجرای Xray با لاگ‌گیری
-          sudo /usr/local/bin/xray run -config /usr/local/etc/xray/config.json > /var/log/xray/error.log 2>&1 &
-          
-          sleep 6
-          
-          echo "=== Xray Process ==="
-          ps aux | grep xray
-          
-          echo "=== Port 6969 Status ==="
-          sudo ss -tulpn | grep 6969 || echo "❌ Port 6969 is NOT listening!"
+          echo "=== Xray Service Status ==="
+          sudo systemctl status xray --no-pager || true
+          echo "=== Checking if Port 6969 is Listening ==="
+          sudo ss -tulpn | grep 6969 || echo "Port 6969 is NOT listening!"
 
       - name: Install & Start Cloudflare Quick Tunnel
         run: |
-          sudo curl -L --output /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i /tmp/cloudflared.deb
-
-          nohup sudo cloudflared tunnel --url http://127.0.0.1:6969 \
-            --http2-origin --loglevel info > cloudflared.log 2>&1 &
-
+          sudo curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared.deb
+          
+          # استفاده از پروتکل استاندارد و فلگ فعال‌ساز HTTP/2 برای اوریجین
+          sudo cloudflared tunnel --url http://127.0.0.1:6969 --http2-origin > cloudflared.log 2>&1 &
+          
+          # لوپ انتظار داینامیک برای مطمئن شدن از دریافت آدرس تانل
           TUNNEL_URL=""
-          for i in {1..40}; do
-            sleep 3
-            TUNNEL_URL=$(grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" cloudflared.log | tail -n 1)
-            if [ -n "$TUNNEL_URL" ]; then
-              echo "✅ Tunnel established: $TUNNEL_URL"
-              break
+          for i in {1..15}; do
+            if [ -f cloudflared.log ]; then
+              TUNNEL_URL=$(grep -oE "https://[a-zA-Z0-9-]+.trycloudflare.com" cloudflared.log | head -n 1)
+              if [ ! -z "$TUNNEL_URL" ]; then
+                echo "🎯 Cloudflare Tunnel established successfully!"
+                break
+              fi
             fi
-            echo "Attempt $i/40..."
+            echo "⏳ Waiting for Cloudflare Tunnel to generate URL (Attempt $i/15)..."
+            sleep 2
           done
 
           if [ -z "$TUNNEL_URL" ]; then
-            echo "❌ Tunnel failed!"
+            echo "❌ Error: Cloudflare Tunnel failed to generate a URL!"
+            echo "=== Cloudflared Logs ==="
             cat cloudflared.log
             exit 1
           fi
 
           echo "CF_TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
+          echo "Cloudflare Tunnel URL is: $TUNNEL_URL"
 
-      - name: Download Theme1 Project
+      - name: Download and Extract Theme1 Project
         run: |
-          curl -L https://github.com/masezahedi/theme1/archive/refs/heads/main.zip -o theme1.zip
-          unzip theme1.zip
+          sudo curl -L https://github.com/masezahedi/theme1/archive/refs/heads/main.zip -o theme1.zip
+          sudo unzip theme1.zip
           cd theme1-main
           echo "PROJECT_DIR=$(pwd)" >> $GITHUB_ENV
 
-      - name: Create vercel.json (with Public settings)
+      - name: Update vercel.json with Cloudflare Tunnel URL
         run: |
           cd ${{ env.PROJECT_DIR }}
           
-          cat > vercel.json << EOF
+          sudo tee vercel.json << EOF
           {
             "version": 2,
-            "public": true,
             "rewrites": [
               {
                 "source": "/api/:path*",
-                "destination": "${{ env.CF_TUNNEL_URL }}/api/:path*"
+                "destination": "$CF_TUNNEL_URL/api/:path*"
               }
             ],
             "headers": [
@@ -137,19 +126,62 @@ jobs:
                 "headers": [
                   {
                     "key": "Cache-Control",
-                    "value": "no-store, no-cache, must-revalidate, proxy-revalidate"
+                    "value": "no-store"
                   },
                   {
                     "key": "CDN-Cache-Control",
                     "value": "no-store"
                   },
                   {
-                    "key": "Access-Control-Allow-Origin",
-                    "value": "*"
-                  },
-                  {
-                    "key": "Access-Control-Allow-Methods",
-                    "value": "GET, POST, OPTIONS"
+                    "key": "Vercel-CDN-Cache-Control",
+                    "value": "no-store"
                   }
                 ]
-             
+              }
+            ]
+          }
+          EOF
+          sudo cat vercel.json
+
+      - name: Install Vercel CLI & Deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          sudo npm install -g vercel --unsafe-perm
+          cd ${{ env.PROJECT_DIR }}
+          
+          VERCEL_OUTPUT=$(sudo vercel --token=$VERCEL_TOKEN --prod --yes)
+          echo "$VERCEL_OUTPUT"
+          
+          VERCEL_URL=$(echo "$VERCEL_OUTPUT" | grep -oE "https://[a-zA-Z0-9-]+.vercel.app" | head -n 1)
+          
+          if [ -z "$VERCEL_URL" ]; then
+            echo "❌ Error: Could not extract Vercel Deployment URL!"
+            exit 1
+          fi
+          
+          CLEAN_VERCEL_URL=$(echo $VERCEL_URL | sed -e 's/https:\/\///g')
+          
+          echo "--------------------------------------------------"
+          echo "🔥 DEPLOYMENT SUCCESSFUL! 🔥"
+          echo "Vercel Project URL: $VERCEL_URL"
+          echo "--------------------------------------------------"
+          
+          # لینک کانفیگ نهایی کلاینت آپدیت‌شده با xhttp settings جدید
+          FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@$CLEAN_VERCEL_URL:443?encryption=none&security=tls&fp=chrome&insecure=1&allowInsecure=1&type=xhttp&host=$CLEAN_VERCEL_URL&path=%2Fapi&mode=packet-up#MZF"
+          
+          echo ""
+          echo "🎯 YOUR CLIENT CONFIG:"
+          echo "$FINAL_CONFIG"
+          echo ""
+          echo "--------------------------------------------------"
+
+      - name: Keep Runner Alive for 6 Hours
+        run: |
+          echo "Runner is alive and serving proxies. Sleeping for 6 hours..."
+          
+          # نمایش زنده لاگ‌ها جهت عیب‌یابی رفتاری کلاینت
+          sudo journalctl -u xray -f &
+          sudo tail -f cloudflared.log &
+          
+          sleep 6h
