@@ -24,7 +24,9 @@ jobs:
           sudo tee /usr/local/etc/xray/config.json << 'EOF'
           {
             "log": {
-              "loglevel": "warning"
+              "loglevel": "warning",
+              "access": "/var/log/xray/access.log",
+              "error": "/var/log/xray/error.log"
             },
             "inbounds": [
               {
@@ -62,42 +64,46 @@ jobs:
           }
           EOF
 
-      - name: Start Xray (Direct Run)
+      - name: Fix Permissions & Start Xray
         run: |
+          sudo mkdir -p /var/log/xray
+          sudo chown -R runner:runner /var/log/xray
+          sudo chmod 777 /var/log/xray
+
           sudo pkill xray || true
-          sudo /usr/local/bin/xray run -config /usr/local/etc/xray/config.json > /var/log/xray.log 2>&1 &
-          sleep 4
-          echo "=== Xray Process Status ==="
+          
+          # اجرای درست با sudo
+          sudo /usr/local/bin/xray run -config /usr/local/etc/xray/config.json > /dev/null 2>&1 &
+          
+          sleep 5
+          
+          echo "=== Xray Processes ==="
           ps aux | grep xray
-          echo "=== Port 6969 ==="
-          sudo ss -tulpn | grep 6969 || echo "Port 6969 is NOT listening!"
+          
+          echo "=== Port 6969 Status ==="
+          sudo ss -tulpn | grep 6969 || echo "❌ Port 6969 is NOT listening!"
 
       - name: Install & Start Cloudflare Quick Tunnel
         run: |
           sudo curl -L --output /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i /tmp/cloudflared.deb
 
-          # اجرای Cloudflared با لاگ کامل
           nohup sudo cloudflared tunnel --url http://127.0.0.1:6969 \
-            --http2-origin \
-            --loglevel debug > cloudflared.log 2>&1 &
-
-          echo "⏳ Waiting for Cloudflare Tunnel URL..."
+            --http2-origin --loglevel info > cloudflared.log 2>&1 &
 
           TUNNEL_URL=""
-          for i in {1..35}; do
+          for i in {1..40}; do
             sleep 3
             TUNNEL_URL=$(grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" cloudflared.log | tail -n 1)
             if [ -n "$TUNNEL_URL" ]; then
-              echo "✅ Cloudflare Tunnel established!"
-              echo "Tunnel URL: $TUNNEL_URL"
+              echo "✅ Tunnel established: $TUNNEL_URL"
               break
             fi
-            echo "Attempt $i/35..."
+            echo "Attempt $i/40..."
           done
 
           if [ -z "$TUNNEL_URL" ]; then
-            echo "❌ Failed to get Tunnel URL"
+            echo "❌ Tunnel failed!"
             cat cloudflared.log
             exit 1
           fi
@@ -114,7 +120,6 @@ jobs:
       - name: Create vercel.json
         run: |
           cd ${{ env.PROJECT_DIR }}
-          
           cat > vercel.json << EOF
           {
             "version": 2,
@@ -128,28 +133,14 @@ jobs:
               {
                 "source": "/api/:path*",
                 "headers": [
-                  {
-                    "key": "Cache-Control",
-                    "value": "no-store, no-cache, must-revalidate, proxy-revalidate"
-                  },
-                  {
-                    "key": "CDN-Cache-Control",
-                    "value": "no-store"
-                  },
-                  {
-                    "key": "Vercel-CDN-Cache-Control",
-                    "value": "no-store"
-                  },
-                  {
-                    "key": "Connection",
-                    "value": "keep-alive"
-                  }
+                  { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate" },
+                  { "key": "CDN-Cache-Control", "value": "no-store" },
+                  { "key": "Vercel-CDN-Cache-Control", "value": "no-store" }
                 ]
               }
             ]
           }
           EOF
-
           cat vercel.json
 
       - name: Deploy to Vercel
@@ -157,33 +148,20 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           npm install -g vercel --unsafe-perm
-          
           cd ${{ env.PROJECT_DIR }}
           
-          VERCEL_OUTPUT=$(vercel --token=$VERCEL_TOKEN --prod --yes 2>&1)
-          echo "$VERCEL_OUTPUT"
-          
-          VERCEL_URL=$(echo "$VERCEL_OUTPUT" | grep -oE "https://[a-zA-Z0-9-]+\.vercel\.app" | head -n 1)
+          VERCEL_URL=$(vercel --token=$VERCEL_TOKEN --prod --yes | grep -oE "https://[a-zA-Z0-9-]+\.vercel\.app" | head -n 1)
           
           if [ -z "$VERCEL_URL" ]; then
-            echo "❌ Could not detect Vercel URL"
+            echo "❌ Vercel deployment failed"
             exit 1
           fi
 
           CLEAN_VERCEL_URL=$(echo $VERCEL_URL | sed 's|https://||g')
           
-          echo "--------------------------------------------------"
-          echo "✅ DEPLOYMENT SUCCESSFUL!"
-          echo "Vercel URL: $VERCEL_URL"
-          echo "--------------------------------------------------"
+          echo "✅ Vercel URL: $VERCEL_URL"
           
           FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@$CLEAN_VERCEL_URL:443?encryption=none&security=tls&fp=chrome&allowInsecure=1&type=xhttp&host=$CLEAN_VERCEL_URL&path=%2Fapi&mode=packet-up#Ultimate-Ephemeral"
           
           echo "🎯 CLIENT CONFIG:"
           echo "$FINAL_CONFIG"
-          echo "--------------------------------------------------"
-
-      - name: Keep Runner Alive (6 Hours)
-        run: |
-          echo "Runner is running... Keeping services alive for 6 hours."
-          sleep 6h
