@@ -67,17 +67,17 @@ jobs:
       - name: Fix Permissions & Start Xray
         run: |
           sudo mkdir -p /var/log/xray
-          sudo chown -R runner:runner /var/log/xray
-          sudo chmod 777 /var/log/xray
+          sudo chown -R $USER:$USER /var/log/xray /usr/local/etc/xray
+          sudo chmod -R 777 /var/log/xray
 
           sudo pkill xray || true
           
-          # اجرای درست با sudo
-          sudo /usr/local/bin/xray run -config /usr/local/etc/xray/config.json > /dev/null 2>&1 &
+          # اجرای Xray با لاگ‌گیری
+          sudo /usr/local/bin/xray run -config /usr/local/etc/xray/config.json > /var/log/xray/error.log 2>&1 &
           
-          sleep 5
+          sleep 6
           
-          echo "=== Xray Processes ==="
+          echo "=== Xray Process ==="
           ps aux | grep xray
           
           echo "=== Port 6969 Status ==="
@@ -117,12 +117,14 @@ jobs:
           cd theme1-main
           echo "PROJECT_DIR=$(pwd)" >> $GITHUB_ENV
 
-      - name: Create vercel.json
+      - name: Create vercel.json (with Public settings)
         run: |
           cd ${{ env.PROJECT_DIR }}
+          
           cat > vercel.json << EOF
           {
             "version": 2,
+            "public": true,
             "rewrites": [
               {
                 "source": "/api/:path*",
@@ -133,35 +135,21 @@ jobs:
               {
                 "source": "/api/:path*",
                 "headers": [
-                  { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate" },
-                  { "key": "CDN-Cache-Control", "value": "no-store" },
-                  { "key": "Vercel-CDN-Cache-Control", "value": "no-store" }
+                  {
+                    "key": "Cache-Control",
+                    "value": "no-store, no-cache, must-revalidate, proxy-revalidate"
+                  },
+                  {
+                    "key": "CDN-Cache-Control",
+                    "value": "no-store"
+                  },
+                  {
+                    "key": "Access-Control-Allow-Origin",
+                    "value": "*"
+                  },
+                  {
+                    "key": "Access-Control-Allow-Methods",
+                    "value": "GET, POST, OPTIONS"
+                  }
                 ]
-              }
-            ]
-          }
-          EOF
-          cat vercel.json
-
-      - name: Deploy to Vercel
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: |
-          npm install -g vercel --unsafe-perm
-          cd ${{ env.PROJECT_DIR }}
-          
-          VERCEL_URL=$(vercel --token=$VERCEL_TOKEN --prod --yes | grep -oE "https://[a-zA-Z0-9-]+\.vercel\.app" | head -n 1)
-          
-          if [ -z "$VERCEL_URL" ]; then
-            echo "❌ Vercel deployment failed"
-            exit 1
-          fi
-
-          CLEAN_VERCEL_URL=$(echo $VERCEL_URL | sed 's|https://||g')
-          
-          echo "✅ Vercel URL: $VERCEL_URL"
-          
-          FINAL_CONFIG="vless://61e89599-47de-45ca-93ba-8a84e89d7391@$CLEAN_VERCEL_URL:443?encryption=none&security=tls&fp=chrome&allowInsecure=1&type=xhttp&host=$CLEAN_VERCEL_URL&path=%2Fapi&mode=packet-up#Ultimate-Ephemeral"
-          
-          echo "🎯 CLIENT CONFIG:"
-          echo "$FINAL_CONFIG"
+             
